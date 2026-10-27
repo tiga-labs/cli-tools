@@ -1,0 +1,53 @@
+version: 2
+
+project_name: cli-tools
+
+before:
+  hooks:
+    - go mod tidy
+    - go test ./...
+
+builds:
+  - id: enrich
+    main: ./cmd/enrich
+    binary: enrich
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+
+  # Add future CLI tools under cmd/<tool> here:
+  # - id: another-tool
+  #   main: ./cmd/another-tool
+  #   binary: another-tool
+  #   env:
+  #     - CGO_ENABLED=0
+  #   goos: [darwin, linux]
+  #   goarch: [amd64, arm64]
+  #   ldflags:
+  #     - -s -w -X main.version={{.Version}}
+
+archives:
+  - id: default
+    ids:
+      - enrich
+    name_template: "{{ .Binary }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    format_overrides:
+      - goos: darwin
+        formats: ["zip", "tar.gz"]
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
