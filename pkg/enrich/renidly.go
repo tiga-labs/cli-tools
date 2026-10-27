@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/tiga-labs/cli-tools/pkg/httpx"
 	"strings"
 
 	"github.com/tiga-labs/cli-tools/pkg/urlutil"
@@ -355,7 +356,7 @@ func RenidlyEnrichCompany(ctx context.Context, apiKey string, row *ContactRecord
 
 func renidlyGet(ctx context.Context, apiKey, endpoint string, queryParams map[string]string) (RenidlyEnvelope, error) {
 	var env RenidlyEnvelope
-	resp, err := newProviderClient().R().
+	resp, err := httpx.Client().R().
 		SetContext(ctx).
 		SetHeader("X-renidly-apikey", apiKey).
 		SetHeader("Accept", "application/json").

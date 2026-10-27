@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/tiga-labs/cli-tools/pkg/httpx"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -113,7 +114,7 @@ func FindymailFindFromName(ctx context.Context, apiKey string, row *ContactRecor
 	}
 
 	var res FindymailResponse
-	resp, err := newProviderClient().R().
+	resp, err := httpx.Client().R().
 		SetContext(ctx).
 		SetAuthToken(apiKey).
 		SetHeader("Content-Type", "application/json").
@@ -154,7 +155,7 @@ func FindymailFindFromLinkedIn(ctx context.Context, apiKey string, row *ContactR
 	}
 
 	var res FindymailResponse
-	resp, err := newProviderClient().R().
+	resp, err := httpx.Client().R().
 		SetContext(ctx).
 		SetAuthToken(apiKey).
 		SetHeader("Content-Type", "application/json").
@@ -194,7 +195,7 @@ func FindymailFindPhoneFromLinkedIn(ctx context.Context, apiKey string, row *Con
 	}
 
 	var res FindymailPhoneResponse
-	resp, err := newProviderClient().R().
+	resp, err := httpx.Client().R().
 		SetContext(ctx).
 		SetAuthToken(apiKey).
 		SetHeader("Content-Type", "application/json").
@@ -280,7 +281,7 @@ func buildProspeoReqData(row *ContactRecord) prospeoEnrichRequestData {
 // outcome and is returned as (nil, nil) rather than an error.
 func prospeoEnrich(ctx context.Context, apiKey string, reqBody prospeoEnrichRequest, label string) (*prospeoResponse, error) {
 	var res prospeoResponse
-	resp, err := newProviderClient().R().
+	resp, err := httpx.Client().R().
 		SetContext(ctx).
 		SetHeader("Content-Type", "application/json").
 		SetHeader("X-KEY", apiKey).
@@ -419,7 +420,7 @@ func ApolloEnrichPerson(ctx context.Context, apiKey string, row *ContactRecord) 
 	}
 
 	var ret apolloMatchResponse
-	req := newProviderClient().R().
+	req := httpx.Client().R().
 		SetContext(ctx).
 		SetHeader("Content-Type", "application/json").
 		SetHeader("Cache-Control", "no-cache").
@@ -467,7 +468,7 @@ func ApolloSearchPerson(ctx context.Context, apiKey string, row *ContactRecord) 
 
 	var res apolloSearchResponse
 	keywords := strings.TrimSpace(row.FirstName + " " + row.LastName + " " + row.CompanyName)
-	resp, err := newProviderClient().R().
+	resp, err := httpx.Client().R().
 		SetContext(ctx).
 		SetHeader("Content-Type", "application/json").
 		SetHeader("Cache-Control", "no-cache").
@@ -496,7 +497,7 @@ func ApolloEnrichAccount(ctx context.Context, apiKey, domain string) (apolloOrgR
 	if strings.TrimSpace(domain) == "" || strings.TrimSpace(apiKey) == "" {
 		return res, nil
 	}
-	resp, err := newProviderClient().R().
+	resp, err := httpx.Client().R().
 		SetContext(ctx).
 		SetHeader("Content-Type", "application/json").
 		SetHeader("Cache-Control", "no-cache").
@@ -623,7 +624,7 @@ func LushaEnrichContact(ctx context.Context, apiKey string, row *ContactRecord, 
 	}
 
 	var personRes lushaPersonResponse
-	resp, err := newProviderClient().R().
+	resp, err := httpx.Client().R().
 		SetContext(ctx).
 		SetHeader("api_key", apiKey).
 		SetQueryParams(queryParams).
@@ -767,7 +768,7 @@ func SeamlessResearchContact(ctx context.Context, apiKey string, row *ContactRec
 	}
 
 	var submitRes seamlessResearchSubmitResponse
-	resp, err := newProviderClient().R().
+	resp, err := httpx.Client().R().
 		SetContext(ctx).
 		SetHeader("Content-Type", "application/json").
 		SetHeader("Token", apiKey).
@@ -794,7 +795,7 @@ func SeamlessResearchContact(ctx context.Context, apiKey string, row *ContactRec
 		}
 
 		var pollRes seamlessPollResponse
-		pResp, pErr := newProviderClient().R().
+		pResp, pErr := httpx.Client().R().
 			SetContext(ctx).
 			SetHeader("Content-Type", "application/json").
 			SetHeader("Token", apiKey).
@@ -936,7 +937,7 @@ func DropcontactFindFromName(ctx context.Context, apiKey string, row *ContactRec
 	}
 
 	var enrichRes dropcontactEnrichResponse
-	resp, err := newProviderClient().R().
+	resp, err := httpx.Client().R().
 		SetContext(ctx).
 		SetHeader("Content-Type", "application/json").
 		SetHeader("X-Access-Token", apiKey).
@@ -962,7 +963,7 @@ func DropcontactFindFromName(ctx context.Context, apiKey string, row *ContactRec
 		}
 
 		var res dropcontactResultResponse
-		gResp, gErr := newProviderClient().R().
+		gResp, gErr := httpx.Client().R().
 			SetContext(ctx).
 			SetHeader("Content-Type", "application/json").
 			SetHeader("X-Access-Token", apiKey).
@@ -1045,7 +1046,7 @@ func HunterFindFromName(ctx context.Context, apiKey string, row *ContactRecord) 
 	}
 
 	var res hunterEmailFinderResponse
-	req := newProviderClient().R().
+	req := httpx.Client().R().
 		SetContext(ctx).
 		SetHeader("Content-Type", "application/json").
 		SetQueryParam("api_key", apiKey).
@@ -1115,7 +1116,7 @@ func DatagmaFindFromName(ctx context.Context, apiKey string, row *ContactRecord)
 	}
 
 	var res datagmaFindByNameResponse
-	resp, err := newProviderClient().R().
+	resp, err := httpx.Client().R().
 		SetContext(ctx).
 		SetHeader("Content-Type", "application/json").
 		SetHeader("Cache-Control", "no-cache").
@@ -1158,7 +1159,7 @@ func DatagmaEnrichPerson(ctx context.Context, apiKey string, row *ContactRecord)
 	}
 
 	var res datagmaEnrichPersonResponse
-	resp, err := newProviderClient().R().
+	resp, err := httpx.Client().R().
 		SetContext(ctx).
 		SetHeader("Content-Type", "application/json").
 		SetHeader("Cache-Control", "no-cache").
@@ -1259,7 +1260,7 @@ func LeadIQFindByNameAndCompany(ctx context.Context, apiKey string, row *Contact
 		},
 	}
 
-	resp, err := newProviderClient().R().
+	resp, err := httpx.Client().R().
 		SetContext(ctx).
 		SetBasicAuth(apiKey, "").
 		SetHeader("Content-Type", "application/json").

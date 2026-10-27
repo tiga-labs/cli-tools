@@ -19,7 +19,7 @@ func EnrichContact(ctx context.Context, cfg *Config, opts RunOptions, row *Conta
 		return errors.New("row is nil")
 	}
 	if cfg == nil {
-		cfg = &Config{Keys: make(map[string]string)}
+		cfg = NewConfig(nil)
 	}
 
 	row.FirstName = strings.TrimSpace(row.FirstName)
@@ -89,7 +89,7 @@ func EnrichContact(ctx context.Context, cfg *Config, opts RunOptions, row *Conta
 	}
 
 	// 4. Resolve Active Waterfall Providers
-	activeVendors, err := cfg.ResolveActiveWaterfallVendors(opts.Vendors, opts.Exclude)
+	activeVendors, err := ResolveActiveWaterfallVendors(cfg, opts.Vendors, opts.Exclude)
 	if err != nil {
 		row.Status = "error"
 		row.Error = err.Error()

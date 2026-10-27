@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"github.com/tiga-labs/cli-tools/pkg/httpx"
 	"io"
 	"net/http"
 	"os"
@@ -46,7 +47,7 @@ func TestCLIKeysAndPersonAndCSV(t *testing.T) {
 	}
 
 	// 3. Single person enrichment via CLI
-	enrich.ProviderTransport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+	httpx.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		raw, _ := json.Marshal(map[string]any{
 			"contact": map[string]any{"email": "ada@analyticalengine.org"},
 		})
@@ -56,7 +57,7 @@ func TestCLIKeysAndPersonAndCSV(t *testing.T) {
 			Body:       io.NopCloser(bytes.NewReader(raw)),
 		}, nil
 	})
-	defer func() { enrich.ProviderTransport = nil }()
+	defer func() { httpx.Transport = nil }()
 
 	stdout.Reset()
 	stderr.Reset()

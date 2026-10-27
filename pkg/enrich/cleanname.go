@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/tiga-labs/cli-tools/pkg/httpx"
 	"io"
 	"net/http"
 	"strings"
@@ -165,7 +166,7 @@ func callOpenAIJSON(ctx context.Context, apiKey, prompt string) (string, error) 
 	}
 
 	var chatRes openAIChatResponse
-	resp, err := newProviderClient().R().
+	resp, err := httpx.Client().R().
 		SetContext(ctx).
 		SetAuthToken(apiKey).
 		SetHeader("Content-Type", "application/json").
@@ -201,8 +202,8 @@ func ScrapeCompanyLinkedInFromWebsite(ctx context.Context, websiteOrDomain strin
 	}
 
 	transport := http.DefaultTransport
-	if ProviderTransport != nil {
-		transport = ProviderTransport
+	if httpx.Transport != nil {
+		transport = httpx.Transport
 	}
 	client := &http.Client{
 		Timeout:   15 * time.Second,

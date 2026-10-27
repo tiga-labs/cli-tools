@@ -7,7 +7,7 @@ description: "Run standalone waterfall contact enrichment from the command line 
 
 `enrich` is a standalone, scriptable command-line tool that runs multi-vendor waterfall enrichment against CSV files of contacts or single individuals. It cascades through configured data providers in priority order and stops as soon as all requested target fields (`email`, `linkedin`, `phone`) are found.
 
-**CLI basics.** Invoke `enrich` directly from the shell (`enrich person`, `enrich csv`, `enrich keys`). Keys are persisted locally in `~/.config/enrich/config.json` (or overridden via environment variables). Never print, echo, or log raw API keys—always use `enrich keys list` which masks them automatically.
+**CLI basics.** Invoke `enrich` directly from the shell (`enrich person`, `enrich csv`, `enrich keys`). Keys are persisted locally in `~/.config/tiga/config.json` (or overridden via environment variables). Never print, echo, or log raw API keys—always use `enrich keys list` which masks them automatically.
 
 **Related skills:** use **list-building** when discovering net-new accounts/people inside the Tiga platform, **signals** to score lists, and **sequence-runner** to enroll enriched contacts.
 
@@ -73,7 +73,7 @@ When `--vendors` is not passed, `enrich` automatically runs every waterfall vend
 
 ## Workflow 1: Manage Vendor API Keys (`enrich keys`)
 
-Keys are stored in `~/.config/enrich/config.json` (with `0600` permissions). Environment variables (`FINDYMAIL_API_KEY`, `PROSPEO_API_KEY`, `APOLLO_API_KEY`, `LUSHA_API_KEY`, `SEAMLESS_API_KEY`, `DROPCONTACT_API_KEY`, `HUNTER_API_KEY`, `DATAGMA_API_KEY`, `LEADIQ_API_KEY`, `RENIDLY_API_KEY`, `ZEROBOUNCE_API_KEY`, `OPENAI_API_KEY`) automatically take precedence over the config file.
+Keys are stored in `~/.config/tiga/config.json` (with `0600` permissions). Environment variables (`FINDYMAIL_API_KEY`, `PROSPEO_API_KEY`, `APOLLO_API_KEY`, `LUSHA_API_KEY`, `SEAMLESS_API_KEY`, `DROPCONTACT_API_KEY`, `HUNTER_API_KEY`, `DATAGMA_API_KEY`, `LEADIQ_API_KEY`, `RENIDLY_API_KEY`, `ZEROBOUNCE_API_KEY`, `OPENAI_API_KEY`) automatically take precedence over the config file.
 
 1. **Audit configured keys** (safe—keys are masked):
    ```bash
@@ -377,7 +377,7 @@ if not_found:
 | `--clean-names` / `--no-clean-names` | `false` | Clean person & company names via OpenAI (`openai` key) |
 | `--research-company` / `--no-research-company` | `false` | Resolve company LinkedIn/website via Renidly, Apollo, and website scraping |
 | `--verify-email` / `--no-verify-email` | `false` | Validate discovered emails via ZeroBounce (`zerobounce` key) |
-| `--config <path>` | `~/.config/enrich/config.json` | Custom path to key configuration file |
+| `--config <path>` | `~/.config/tiga/config.json` | Custom path to key configuration file |
 
 ### `enrich person` specific flags
 | Flag | Description |

@@ -2,9 +2,8 @@ package enrich
 
 import (
 	"context"
-	"encoding/csv"
-	"errors"
 	"fmt"
+	"github.com/tiga-labs/cli-tools/pkg/csvrun"
 	"io"
 	"strings"
 	"sync"
@@ -76,138 +75,45 @@ func ProcessCSV(
 	overrides ColumnOverrides,
 	onProgress ProgressCallback,
 ) error {
-	if ctx == nil {
-		return errors.New("ctx is nil")
+	// records holds finished rows for the progress callback, keyed by row index.
+	records := make(map[int]ContactRecord)
+	var mu sync.Mutex
+	runOpts := csvrun.Options{Concurrency: opts.Concurrency, AppendedHeaders: AppendedCSVHeaders}
+	if onProgress != nil {
+		runOpts.OnRowDone = func(completed, total, index int) {
+			mu.Lock()
+			rec := records[index]
+			delete(records, index)
+			mu.Unlock()
+			onProgress(completed, total, rec)
+		}
 	}
-	if r == nil || w == nil {
-		return errors.New("reader and writer are required")
-	}
-
-	reader := csv.NewReader(r)
-	reader.FieldsPerRecord = -1 // allow variable trailing fields
-	reader.LazyQuotes = true
-
-	allRows, err := reader.ReadAll()
-	if err != nil {
-		return fmt.Errorf("failed to read CSV: %w", err)
-	}
-	if len(allRows) == 0 {
-		return errors.New("CSV input is empty")
-	}
-
-	headers := allRows[0]
-	dataRows := allRows[1:]
-
-	colIdx, err := resolveColumnIndices(headers, overrides)
-	if err != nil {
-		return err
-	}
-
-	concurrency := opts.Concurrency
-	if concurrency <= 0 {
-		concurrency = 5
-	}
-
-	total := len(dataRows)
-	enrichedRecords := make([]ContactRecord, total)
-
-	writer := csv.NewWriter(w)
-	outHeader := make([]string, 0, len(headers)+len(AppendedCSVHeaders))
-	outHeader = append(outHeader, headers...)
-	outHeader = append(outHeader, AppendedCSVHeaders...)
-	if err := writer.Write(outHeader); err != nil {
-		return err
-	}
-	writer.Flush()
-	if err := writer.Error(); err != nil {
-		return err
-	}
-
-	type jobItem struct {
-		index int
-		row   []string
-	}
-
-	jobs := make(chan jobItem, total)
-	for i, row := range dataRows {
-		jobs <- jobItem{index: i, row: row}
-	}
-	close(jobs)
-
-	// done receives the index of each finished row; buffered so workers never block on the writer.
-	done := make(chan int, total)
-
-	numWorkers := concurrency
-	if total < numWorkers {
-		numWorkers = total
-	}
-	if numWorkers == 0 {
-		numWorkers = 1
-	}
-
-	var wg sync.WaitGroup
-	for wIdx := 0; wIdx < numWorkers; wIdx++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for item := range jobs {
-				rec := extractContactFromCSVRow(item.row, colIdx)
-				if err := ctx.Err(); err != nil {
-					// Keep output aligned with input: emit cancelled rows without calling vendors.
-					rec.Status = "error"
-					rec.Error = err.Error()
-				} else {
-					_ = EnrichContact(ctx, cfg, opts, &rec)
-				}
-				enrichedRecords[item.index] = rec
-				done <- item.index
+	return csvrun.Process(ctx, r, w, runOpts, func(headers []string) (csvrun.RowFunc, error) {
+		colIdx, err := resolveColumnIndices(headers, overrides)
+		if err != nil {
+			return nil, err
+		}
+		return func(ctx context.Context, index int, row []string) []string {
+			rec := extractContactFromCSVRow(row, colIdx)
+			if err := ctx.Err(); err != nil {
+				// Keep output aligned with input: emit cancelled rows without calling vendors.
+				rec.Status = "error"
+				rec.Error = err.Error()
+			} else {
+				_ = EnrichContact(ctx, cfg, opts, &rec)
 			}
-		}()
-	}
-	go func() {
-		wg.Wait()
-		close(done)
-	}()
-
-	// Write rows in original order as soon as every earlier row has finished, so
-	// completed (paid) results reach the output even if the run is interrupted.
-	finished := make([]bool, total)
-	next := 0
-	completedCount := 0
-	var writeErr error
-	for idx := range done {
-		finished[idx] = true
-		completedCount++
-		if onProgress != nil {
-			onProgress(completedCount, total, enrichedRecords[idx])
-		}
-		if writeErr != nil {
-			continue
-		}
-		for next < total && finished[next] {
-			if err := writer.Write(csvOutputRow(headers, dataRows[next], enrichedRecords[next])); err != nil {
-				writeErr = err
-				break
+			if onProgress != nil {
+				mu.Lock()
+				records[index] = rec
+				mu.Unlock()
 			}
-			next++
-		}
-		writer.Flush()
-		if err := writer.Error(); err != nil && writeErr == nil {
-			writeErr = err
-		}
-	}
-	if writeErr != nil {
-		return writeErr
-	}
-	return ctx.Err()
+			return csvAppendedCells(rec)
+		}, nil
+	})
 }
 
-func csvOutputRow(headers, origRow []string, rec ContactRecord) []string {
-	// Pad origRow if it had fewer columns than headers
-	padded := make([]string, len(headers))
-	copy(padded, origRow)
-
-	appended := []string{
+func csvAppendedCells(rec ContactRecord) []string {
+	return []string{
 		rec.FirstName,
 		rec.LastName,
 		rec.Email,
@@ -225,18 +131,6 @@ func csvOutputRow(headers, origRow []string, rec ContactRecord) []string {
 		rec.Status,
 		rec.Error,
 	}
-
-	outRow := make([]string, 0, len(padded)+len(appended))
-	outRow = append(outRow, padded...)
-	return append(outRow, appended...)
-}
-
-func normalizeHeaderKey(h string) string {
-	h = strings.ToLower(strings.TrimSpace(h))
-	h = strings.TrimPrefix(h, "\ufeff") // strip UTF-8 BOM if present
-	h = strings.ReplaceAll(h, "-", "_")
-	h = strings.ReplaceAll(h, " ", "_")
-	return h
 }
 
 func resolveColumnIndices(headers []string, overrides ColumnOverrides) (resolvedColumnIndices, error) {
@@ -260,9 +154,9 @@ func resolveColumnIndices(headers []string, overrides ColumnOverrides) (resolved
 			return -1, nil
 		}
 		target := strings.TrimSpace(colName)
-		targetNorm := normalizeHeaderKey(target)
+		targetNorm := csvrun.NormalizeHeader(target)
 		for i, h := range headers {
-			if strings.EqualFold(strings.TrimSpace(h), target) || normalizeHeaderKey(h) == targetNorm {
+			if strings.EqualFold(strings.TrimSpace(h), target) || csvrun.NormalizeHeader(h) == targetNorm {
 				return i, nil
 			}
 		}
@@ -309,7 +203,7 @@ func resolveColumnIndices(headers []string, overrides ColumnOverrides) (resolved
 
 	// Auto-detect any remaining unmapped fields
 	for i, h := range headers {
-		norm := normalizeHeaderKey(h)
+		norm := csvrun.NormalizeHeader(h)
 		switch norm {
 		case "first_name", "firstname", "first", "given_name":
 			if idx.firstName == -1 {

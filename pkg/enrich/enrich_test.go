@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"github.com/tiga-labs/cli-tools/pkg/httpx"
 	"io"
 	"net/http"
 	"os"
@@ -17,6 +18,7 @@ import (
 	"time"
 
 	"github.com/tiga-labs/cli-tools/pkg/enrich"
+	"github.com/tiga-labs/cli-tools/pkg/keystore"
 )
 
 type roundTripFunc func(req *http.Request) (*http.Response, error)
@@ -83,16 +85,14 @@ func TestConfigKeyManagementAndPrecedence(t *testing.T) {
 }
 
 func TestWaterfallOrderingAndEarlyStop(t *testing.T) {
-	cfg := &enrich.Config{
-		Keys: map[string]string{
-			enrich.VendorFindymail: "fm-key",
-			enrich.VendorProspeo:   "pr-key",
-			enrich.VendorLusha:     "lu-key",
-		},
-	}
+	cfg := enrich.NewConfig(map[string]string{
+		enrich.VendorFindymail: "fm-key",
+		enrich.VendorProspeo:   "pr-key",
+		enrich.VendorLusha:     "lu-key",
+	})
 
 	var calledHosts []string
-	enrich.ProviderTransport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+	httpx.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		calledHosts = append(calledHosts, req.URL.Host+req.URL.Path)
 		switch req.URL.Host {
 		case "app.findymail.com":
@@ -119,7 +119,7 @@ func TestWaterfallOrderingAndEarlyStop(t *testing.T) {
 			return jsonHTTPResponse(404, "{}"), nil
 		}
 	})
-	defer func() { enrich.ProviderTransport = nil }()
+	defer func() { httpx.Transport = nil }()
 
 	opts := enrich.DefaultRunOptions()
 	opts.NeedEmail = true
@@ -149,16 +149,14 @@ func TestWaterfallOrderingAndEarlyStop(t *testing.T) {
 }
 
 func TestRenidlyURNAndZeroBounceFallback(t *testing.T) {
-	cfg := &enrich.Config{
-		Keys: map[string]string{
-			enrich.VendorRenidly:    "rnd-key",
-			enrich.VendorZeroBounce: "zb-key",
-			enrich.VendorFindymail:  "fm-key",
-			enrich.VendorHunter:     "hu-key",
-		},
-	}
+	cfg := enrich.NewConfig(map[string]string{
+		enrich.VendorRenidly:    "rnd-key",
+		enrich.VendorZeroBounce: "zb-key",
+		enrich.VendorFindymail:  "fm-key",
+		enrich.VendorHunter:     "hu-key",
+	})
 
-	enrich.ProviderTransport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+	httpx.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		switch req.URL.Host {
 		case "renidly.com":
 			if got := req.Header.Get("X-renidly-apikey"); got != "rnd-key" {
@@ -215,7 +213,7 @@ func TestRenidlyURNAndZeroBounceFallback(t *testing.T) {
 		}
 		return jsonHTTPResponse(404, "{}"), nil
 	})
-	defer func() { enrich.ProviderTransport = nil }()
+	defer func() { httpx.Transport = nil }()
 
 	opts := enrich.DefaultRunOptions()
 	opts.ResolveURN = true
@@ -247,13 +245,11 @@ func TestRenidlyURNAndZeroBounceFallback(t *testing.T) {
 }
 
 func TestCSVBatchPreservesColumnsAndOrder(t *testing.T) {
-	cfg := &enrich.Config{
-		Keys: map[string]string{
-			enrich.VendorFindymail: "fm-key",
-		},
-	}
+	cfg := enrich.NewConfig(map[string]string{
+		enrich.VendorFindymail: "fm-key",
+	})
 
-	enrich.ProviderTransport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+	httpx.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		var body map[string]string
 		_ = json.NewDecoder(req.Body).Decode(&body)
 		name := strings.ToLower(body["name"])
@@ -263,7 +259,7 @@ func TestCSVBatchPreservesColumnsAndOrder(t *testing.T) {
 			"contact": map[string]any{"email": email},
 		}), nil
 	})
-	defer func() { enrich.ProviderTransport = nil }()
+	defer func() { httpx.Transport = nil }()
 
 	inputCSV := strings.Join([]string{
 		"Custom ID,Full Name,Company,Website,Notes",
@@ -334,19 +330,17 @@ func TestAllVendorsAndNameCleaningAndCompanyResearch(t *testing.T) {
 	enrich.DropcontactPollDelay = 0
 	enrich.SeamlessPollDelay = 0
 
-	cfg := &enrich.Config{
-		Keys: map[string]string{
-			enrich.VendorOpenAI:      "oa-key",
-			enrich.VendorApollo:      "ap-key",
-			enrich.VendorLusha:       "lu-key",
-			enrich.VendorSeamless:    "sm-key",
-			enrich.VendorDropcontact: "dc-key",
-			enrich.VendorDatagma:     "dg-key",
-			enrich.VendorLeadIQ:      "lq-key",
-		},
-	}
+	cfg := enrich.NewConfig(map[string]string{
+		enrich.VendorOpenAI:      "oa-key",
+		enrich.VendorApollo:      "ap-key",
+		enrich.VendorLusha:       "lu-key",
+		enrich.VendorSeamless:    "sm-key",
+		enrich.VendorDropcontact: "dc-key",
+		enrich.VendorDatagma:     "dg-key",
+		enrich.VendorLeadIQ:      "lq-key",
+	})
 
-	enrich.ProviderTransport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+	httpx.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		switch req.URL.Host {
 		case "api.openai.com":
 			return jsonHTTPResponse(200, map[string]any{
@@ -441,7 +435,7 @@ func TestAllVendorsAndNameCleaningAndCompanyResearch(t *testing.T) {
 		}
 		return jsonHTTPResponse(404, "{}"), nil
 	})
-	defer func() { enrich.ProviderTransport = nil }()
+	defer func() { httpx.Transport = nil }()
 
 	opts := enrich.DefaultRunOptions()
 	opts.CleanNames = true
@@ -483,10 +477,10 @@ func TestAllVendorsAndNameCleaningAndCompanyResearch(t *testing.T) {
 
 func TestQueryParamKeyVendorsDoNotLeakKeyOnTransportError(t *testing.T) {
 	const secret = "sk-very-secret-key-123"
-	enrich.ProviderTransport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+	httpx.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		return nil, errors.New("dial tcp: connection refused")
 	})
-	defer func() { enrich.ProviderTransport = nil }()
+	defer func() { httpx.Transport = nil }()
 
 	ctx := context.Background()
 	newRow := func() *enrich.ContactRecord {
@@ -512,7 +506,7 @@ func TestQueryParamKeyVendorsDoNotLeakKeyOnTransportError(t *testing.T) {
 	}
 
 	// End-to-end: the key must not reach row.Error (written to CSV/JSON output).
-	cfg := &enrich.Config{Keys: map[string]string{enrich.VendorHunter: secret}}
+	cfg := enrich.NewConfig(map[string]string{enrich.VendorHunter: secret})
 	opts := enrich.DefaultRunOptions()
 	opts.NeedLinkedIn = false
 	row := newRow()
@@ -525,17 +519,17 @@ func TestQueryParamKeyVendorsDoNotLeakKeyOnTransportError(t *testing.T) {
 }
 
 func TestProviderTimeoutBoundsStalledRequests(t *testing.T) {
-	enrich.ProviderTimeout = 50 * time.Millisecond
-	enrich.ProviderTransport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+	httpx.Timeout = 50 * time.Millisecond
+	httpx.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		<-req.Context().Done() // simulate a vendor that never responds
 		return nil, req.Context().Err()
 	})
 	defer func() {
-		enrich.ProviderTransport = nil
-		enrich.ProviderTimeout = 60 * time.Second
+		httpx.Transport = nil
+		httpx.Timeout = 60 * time.Second
 	}()
 
-	cfg := &enrich.Config{Keys: map[string]string{enrich.VendorFindymail: "fm-key"}}
+	cfg := enrich.NewConfig(map[string]string{enrich.VendorFindymail: "fm-key"})
 	opts := enrich.DefaultRunOptions()
 	opts.NeedLinkedIn = false
 	row := enrich.ContactRecord{FirstName: "Jane", LastName: "Doe", Domain: "acme.com"}
@@ -547,7 +541,7 @@ func TestProviderTimeoutBoundsStalledRequests(t *testing.T) {
 		t.Fatalf("EnrichContact failed: %v", err)
 	}
 	if elapsed := time.Since(start); elapsed > 2*time.Second {
-		t.Fatalf("stalled request was not bounded by ProviderTimeout (took %s)", elapsed)
+		t.Fatalf("stalled request was not bounded by httpx.Timeout (took %s)", elapsed)
 	}
 	if row.Status != "error" || row.Error == "" {
 		t.Fatalf("expected timeout error on row, got status=%q error=%q", row.Status, row.Error)
@@ -558,7 +552,7 @@ func TestProcessCSVStreamsInOrderAndReportsCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	enrich.ProviderTransport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+	httpx.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		var body map[string]string
 		_ = json.NewDecoder(req.Body).Decode(&body)
 		if body["name"] == "Bob Two" {
@@ -568,10 +562,10 @@ func TestProcessCSVStreamsInOrderAndReportsCancel(t *testing.T) {
 			"contact": map[string]any{"email": strings.ReplaceAll(strings.ToLower(body["name"]), " ", ".") + "@acme.com"},
 		}), nil
 	})
-	defer func() { enrich.ProviderTransport = nil }()
+	defer func() { httpx.Transport = nil }()
 
 	inputCSV := "ID,Full Name,Domain\n1,Alice One,acme.com\n2,Bob Two,acme.com\n3,Cara Three,acme.com\n4,Dan Four,acme.com\n"
-	cfg := &enrich.Config{Keys: map[string]string{enrich.VendorFindymail: "fm-key"}}
+	cfg := enrich.NewConfig(map[string]string{enrich.VendorFindymail: "fm-key"})
 	opts := enrich.DefaultRunOptions()
 	opts.NeedLinkedIn = false
 	opts.Concurrency = 1
@@ -624,13 +618,13 @@ func (h *hostCounter) RoundTrip(req *http.Request) (*http.Response, error) {
 }
 
 func TestSkippedVendorIsNotFoundNotError(t *testing.T) {
-	enrich.ProviderTransport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+	httpx.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		t.Errorf("no vendor should be called for a row without inputs, got %s", req.URL)
 		return jsonHTTPResponse(500, "{}"), nil
 	})
-	defer func() { enrich.ProviderTransport = nil }()
+	defer func() { httpx.Transport = nil }()
 
-	cfg := &enrich.Config{Keys: map[string]string{enrich.VendorHunter: "hu-key"}}
+	cfg := enrich.NewConfig(map[string]string{enrich.VendorHunter: "hu-key"})
 	opts := enrich.DefaultRunOptions()
 	opts.NeedLinkedIn = false
 	row := enrich.ContactRecord{Title: "CTO"} // no name, company, or domain
@@ -647,10 +641,10 @@ func TestProspeoNoMatchIsNotFound(t *testing.T) {
 	counter := newHostCounter(func(req *http.Request) (*http.Response, error) {
 		return jsonHTTPResponse(400, `{"error":true,"error_code":"NO_MATCH"}`), nil
 	})
-	enrich.ProviderTransport = counter
-	defer func() { enrich.ProviderTransport = nil }()
+	httpx.Transport = counter
+	defer func() { httpx.Transport = nil }()
 
-	cfg := &enrich.Config{Keys: map[string]string{enrich.VendorProspeo: "pr-key"}}
+	cfg := enrich.NewConfig(map[string]string{enrich.VendorProspeo: "pr-key"})
 	row := enrich.ContactRecord{FirstName: "Jane", LastName: "Doe", Domain: "acme.com"}
 	if err := enrich.EnrichContact(context.Background(), cfg, enrich.DefaultRunOptions(), &row); err != nil {
 		t.Fatalf("EnrichContact failed: %v", err)
@@ -664,15 +658,15 @@ func TestProspeoNoMatchIsNotFound(t *testing.T) {
 }
 
 func TestMultipleVendorErrorsAreAllReported(t *testing.T) {
-	enrich.ProviderTransport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+	httpx.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		return jsonHTTPResponse(500, `{"message":"boom"}`), nil
 	})
-	defer func() { enrich.ProviderTransport = nil }()
+	defer func() { httpx.Transport = nil }()
 
-	cfg := &enrich.Config{Keys: map[string]string{
+	cfg := enrich.NewConfig(map[string]string{
 		enrich.VendorFindymail: "fm-key",
 		enrich.VendorHunter:    "hu-key",
-	}}
+	})
 	opts := enrich.DefaultRunOptions()
 	opts.NeedLinkedIn = false
 	row := enrich.ContactRecord{FirstName: "Jane", LastName: "Doe", Domain: "acme.com"}
@@ -698,10 +692,10 @@ func TestProspeoEmailAndLinkedInInOneCall(t *testing.T) {
 			},
 		}), nil
 	})
-	enrich.ProviderTransport = counter
-	defer func() { enrich.ProviderTransport = nil }()
+	httpx.Transport = counter
+	defer func() { httpx.Transport = nil }()
 
-	cfg := &enrich.Config{Keys: map[string]string{enrich.VendorProspeo: "pr-key"}}
+	cfg := enrich.NewConfig(map[string]string{enrich.VendorProspeo: "pr-key"})
 	row := enrich.ContactRecord{FirstName: "Jane", LastName: "Doe", Domain: "acme.com"}
 	if err := enrich.EnrichContact(context.Background(), cfg, enrich.DefaultRunOptions(), &row); err != nil {
 		t.Fatalf("EnrichContact failed: %v", err)
@@ -726,15 +720,15 @@ func TestZeroBounceErrorIsCheckedOnce(t *testing.T) {
 		// Prospeo and Lusha find nothing, so the waterfall keeps going for the LinkedIn URL.
 		return jsonHTTPResponse(404, "{}"), nil
 	})
-	enrich.ProviderTransport = counter
-	defer func() { enrich.ProviderTransport = nil }()
+	httpx.Transport = counter
+	defer func() { httpx.Transport = nil }()
 
-	cfg := &enrich.Config{Keys: map[string]string{
+	cfg := enrich.NewConfig(map[string]string{
 		enrich.VendorFindymail:  "fm-key",
 		enrich.VendorProspeo:    "pr-key",
 		enrich.VendorLusha:      "lu-key",
 		enrich.VendorZeroBounce: "zb-key",
-	}}
+	})
 	opts := enrich.DefaultRunOptions()
 	opts.VerifyEmail = true
 	row := enrich.ContactRecord{FirstName: "Jane", LastName: "Doe", Domain: "acme.com"}
@@ -754,18 +748,18 @@ func TestZeroBounceErrorIsCheckedOnce(t *testing.T) {
 
 func withFastRetries(t *testing.T) {
 	t.Helper()
-	prev := enrich.ProviderRetryMaxWait
-	enrich.ProviderRetryMaxWait = 5 * time.Millisecond
+	prev := httpx.RetryMaxWait
+	httpx.RetryMaxWait = 5 * time.Millisecond
 	t.Cleanup(func() {
-		enrich.ProviderRetryMaxWait = prev
-		enrich.ProviderTransport = nil
+		httpx.RetryMaxWait = prev
+		httpx.Transport = nil
 	})
 }
 
 func TestRateLimitedRequestIsRetried(t *testing.T) {
 	withFastRetries(t)
 	calls := 0
-	enrich.ProviderTransport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+	httpx.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		calls++
 		if calls == 1 {
 			return jsonHTTPResponse(429, "{}"), nil
@@ -787,10 +781,10 @@ func TestRateLimitedRequestIsRetried(t *testing.T) {
 func TestRateLimitRetriesAreBoundedAndCapRetryAfter(t *testing.T) {
 	withFastRetries(t)
 	calls := 0
-	enrich.ProviderTransport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+	httpx.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		calls++
 		resp := jsonHTTPResponse(429, "{}")
-		resp.Header.Set("Retry-After", "120") // must be capped by ProviderRetryMaxWait
+		resp.Header.Set("Retry-After", "120") // must be capped by httpx.RetryMaxWait
 		return resp, nil
 	})
 
@@ -800,8 +794,8 @@ func TestRateLimitRetriesAreBoundedAndCapRetryAfter(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "429") {
 		t.Fatalf("expected 429 error after retries, got %v", err)
 	}
-	if want := 1 + enrich.ProviderRetryCount; calls != want {
-		t.Fatalf("expected %d calls (1 + %d retries), got %d", want, enrich.ProviderRetryCount, calls)
+	if want := 1 + httpx.RetryCount; calls != want {
+		t.Fatalf("expected %d calls (1 + %d retries), got %d", want, httpx.RetryCount, calls)
 	}
 	if elapsed := time.Since(start); elapsed > 2*time.Second {
 		t.Fatalf("Retry-After was not capped (took %s)", elapsed)
@@ -811,7 +805,7 @@ func TestRateLimitRetriesAreBoundedAndCapRetryAfter(t *testing.T) {
 func TestTransportErrorIsNotRetried(t *testing.T) {
 	withFastRetries(t)
 	calls := 0
-	enrich.ProviderTransport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+	httpx.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		calls++
 		return nil, errors.New("connection reset")
 	})
@@ -834,7 +828,7 @@ func TestMaskKeyHidesMostOfShortKeys(t *testing.T) {
 		{"sk-live-0123456789abcdefWXYZ", "sk-l...WXYZ"},
 	}
 	for _, tt := range tests {
-		if got := enrich.MaskKey(tt.in); got != tt.want {
+		if got := keystore.MaskKey(tt.in); got != tt.want {
 			t.Errorf("MaskKey(%q) = %q, want %q", tt.in, got, tt.want)
 		}
 	}
@@ -851,7 +845,7 @@ func TestSaveConfigIsAtomicAndEnforcesMode(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cfg := &enrich.Config{Keys: map[string]string{enrich.VendorHunter: "hu-key-123"}}
+	cfg := enrich.NewConfig(map[string]string{enrich.VendorHunter: "hu-key-123"})
 	if err := enrich.SaveConfig(linkPath, cfg); err != nil {
 		t.Fatalf("SaveConfig failed: %v", err)
 	}
@@ -877,11 +871,11 @@ func TestSaveConfigIsAtomicAndEnforcesMode(t *testing.T) {
 
 func TestApolloHashesNormalizedEmail(t *testing.T) {
 	var got string
-	enrich.ProviderTransport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+	httpx.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		got = req.URL.Query().Get("hashed_email")
 		return jsonHTTPResponse(200, map[string]any{"person": map[string]any{}}), nil
 	})
-	defer func() { enrich.ProviderTransport = nil }()
+	defer func() { httpx.Transport = nil }()
 
 	row := enrich.ContactRecord{Email: "Jane.Doe@Acme.com"}
 	if err := enrich.ApolloEnrichPerson(context.Background(), "ap-key", &row); err != nil {
@@ -895,13 +889,13 @@ func TestApolloHashesNormalizedEmail(t *testing.T) {
 
 func TestFindymailSendsBareLinkedInHandle(t *testing.T) {
 	var sent string
-	enrich.ProviderTransport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+	httpx.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		var body map[string]string
 		_ = json.NewDecoder(req.Body).Decode(&body)
 		sent = body["linkedin_url"]
 		return jsonHTTPResponse(200, map[string]any{"contact": map[string]any{}}), nil
 	})
-	defer func() { enrich.ProviderTransport = nil }()
+	defer func() { httpx.Transport = nil }()
 
 	row := enrich.ContactRecord{PersonLinkedIn: "https://www.linkedin.com/in/JaneDoe/?trk=abc"}
 	if err := enrich.FindymailFindFromLinkedIn(context.Background(), "fm-key", &row); err != nil {
@@ -915,10 +909,10 @@ func TestFindymailSendsBareLinkedInHandle(t *testing.T) {
 func TestScrapeStopsReadingHugePages(t *testing.T) {
 	const link = `<a href="https://www.linkedin.com/company/acme">LinkedIn</a>`
 	var page string
-	enrich.ProviderTransport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+	httpx.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(page))}, nil
 	})
-	defer func() { enrich.ProviderTransport = nil }()
+	defer func() { httpx.Transport = nil }()
 
 	page = "<html><body>" + link + "</body></html>"
 	if got, err := enrich.ScrapeCompanyLinkedInFromWebsite(context.Background(), "acme.com"); err != nil || got != "https://www.linkedin.com/company/acme" {
@@ -929,5 +923,13 @@ func TestScrapeStopsReadingHugePages(t *testing.T) {
 	page = "<html><body>" + strings.Repeat("x", 3<<20) + link + "</body></html>"
 	if got, err := enrich.ScrapeCompanyLinkedInFromWebsite(context.Background(), "acme.com"); err != nil || got != "" {
 		t.Fatalf("expected no link past the read cap, got %q, %v", got, err)
+	}
+}
+
+func TestResolveWaterfallVendorsNilConfigHonorsEnv(t *testing.T) {
+	t.Setenv("FINDYMAIL_API_KEY", "fm-env-key")
+	got, err := enrich.ResolveActiveWaterfallVendors(nil, nil, nil)
+	if err != nil || len(got) == 0 || got[0] != enrich.VendorFindymail {
+		t.Fatalf("got %v, %v", got, err)
 	}
 }

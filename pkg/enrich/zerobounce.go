@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/tiga-labs/cli-tools/pkg/httpx"
 	"strings"
 )
 
@@ -34,7 +35,7 @@ func ZeroBounceValidateEmail(ctx context.Context, apiKey, email string) (bool, e
 	}
 
 	var res ZeroBounceResponse
-	resp, err := newProviderClient().R().
+	resp, err := httpx.Client().R().
 		SetContext(ctx).
 		SetQueryParams(map[string]string{
 			"api_key":    apiKey,

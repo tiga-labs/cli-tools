@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"encoding/csv"
 	"encoding/json"
@@ -11,14 +10,18 @@ import (
 	"io"
 	"os"
 	"os/signal"
-	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"syscall"
 	"text/tabwriter"
 
+	"github.com/tiga-labs/cli-tools/pkg/cliflags"
+	"github.com/tiga-labs/cli-tools/pkg/csvrun"
 	"github.com/tiga-labs/cli-tools/pkg/enrich"
 )
 
+// version is set at release time via -ldflags "-X main.version=...". Builds without it
+// (e.g. `go install ...@v0.1.0`) fall back to the module version embedded by the Go toolchain.
 var version = "dev"
 
 func main() {
@@ -42,7 +45,8 @@ func runCLI(ctx context.Context, args []string, stdin io.Reader, stdout, stderr 
 		printRootUsage(stdout)
 		return nil
 	case "-v", "--version", "version":
-		fmt.Fprintf(stdout, "enrich %s\n", version)
+		info, ok := debug.ReadBuildInfo()
+		fmt.Fprintf(stdout, "enrich %s\n", cliflags.ResolveVersion(version, info, ok))
 		return nil
 	case "keys", "key":
 		return runKeysCommand(args[1:], stdin, stdout, stderr)
@@ -83,107 +87,12 @@ Run "enrich <command> --help" for more information on a command.`)
 // ============================================================================
 
 func runKeysCommand(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
-	fs := flag.NewFlagSet("enrich keys", flag.ContinueOnError)
-	fs.SetOutput(stderr)
-	configPath := fs.String("config", "", "Path to config file (default: ~/.config/enrich/config.json)")
-	jsonOut := fs.Bool("json", false, "Output key list as JSON")
-
-	fs.Usage = func() {
-		fmt.Fprintln(stderr, `Usage:
-  enrich keys list [--json] [--config <path>]
-  enrich keys set <vendor> <api-key> [--config <path>]
-  enrich keys set <vendor> - [--config <path>]   (read the key from stdin; keeps it out of shell history)
-  enrich keys rm <vendor> [--config <path>]
-
-Vendors:
-  Waterfall: findymail, prospeo, apollo, lusha, seamless, dropcontact, hunter, datagma, leadiq
-  Features:  renidly, zerobounce, openai`)
-	}
-
-	// Allow flags before or after positional arguments
-	posArgs, flagArgs := splitPositionalAndFlags(args, map[string]bool{"--config": true, "-config": true})
-	if err := fs.Parse(flagArgs); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return nil
-		}
-		return err
-	}
-
-	action := "list"
-	if len(posArgs) > 0 {
-		action = strings.ToLower(posArgs[0])
-	}
-
-	cfg, err := enrich.LoadConfig(*configPath)
-	if err != nil {
-		return err
-	}
-
-	switch action {
-	case "list", "ls":
-		statuses := cfg.ListKeyStatuses()
-		if *jsonOut {
-			enc := json.NewEncoder(stdout)
-			enc.SetIndent("", "  ")
-			return enc.Encode(statuses)
-		}
-		tw := tabwriter.NewWriter(stdout, 0, 4, 2, ' ', 0)
-		fmt.Fprintln(tw, "VENDOR\tCATEGORY\tCONFIGURED\tSOURCE\tKEY")
-		for _, s := range statuses {
-			cfgStr := "no"
-			if s.Configured {
-				cfgStr = "yes"
-			}
-			mask := s.MaskedKey
-			if mask == "" {
-				mask = "-"
-			}
-			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", s.Vendor, s.Category, cfgStr, s.Source, mask)
-		}
-		return tw.Flush()
-
-	case "set", "add":
-		if len(posArgs) < 3 {
-			fs.Usage()
-			return errors.New("usage: enrich keys set <vendor> <api-key|->")
-		}
-		vendor := posArgs[1]
-		key := posArgs[2]
-		if key == "-" {
-			if key, err = readKeyFromStdin(stdin); err != nil {
-				return err
-			}
-		}
-		if err := cfg.SetKey(vendor, key); err != nil {
-			return err
-		}
-		if err := enrich.SaveConfig(*configPath, cfg); err != nil {
-			return err
-		}
-		norm, _ := enrich.NormalizeVendorName(vendor)
-		fmt.Fprintf(stdout, "Saved API key for %s (%s)\n", norm, enrich.MaskKey(key))
-		return nil
-
-	case "rm", "remove", "delete", "del":
-		if len(posArgs) < 2 {
-			fs.Usage()
-			return errors.New("usage: enrich keys rm <vendor>")
-		}
-		vendor := posArgs[1]
-		if err := cfg.RemoveKey(vendor); err != nil {
-			return err
-		}
-		if err := enrich.SaveConfig(*configPath, cfg); err != nil {
-			return err
-		}
-		norm, _ := enrich.NormalizeVendorName(vendor)
-		fmt.Fprintf(stdout, "Removed API key for %s from config\n", norm)
-		return nil
-
-	default:
-		fs.Usage()
-		return fmt.Errorf("unknown keys action %q (expected: list, set, rm)", action)
-	}
+	return cliflags.RunKeys(cliflags.KeysSpec{
+		Tool:    "enrich",
+		Vendors: enrich.Vendors,
+		VendorHelp: `  Waterfall: findymail, prospeo, apollo, lusha, seamless, dropcontact, hunter, datagma, leadiq
+  Features:  renidly, zerobounce, openai`,
+	}, args, stdin, stdout, stderr)
 }
 
 // ============================================================================
@@ -192,59 +101,45 @@ Vendors:
 
 type runFlagBindings struct {
 	configPath      *string
-	email           *bool
-	noEmail         *bool
-	linkedin        *bool
-	noLinkedin      *bool
-	phone           *bool
-	noPhone         *bool
+	email           cliflags.Toggle
+	linkedin        cliflags.Toggle
+	phone           cliflags.Toggle
 	vendors         *string
 	excludeVendors  *string
-	resolveURN      *bool
-	noResolveURN    *bool
-	cleanNames      *bool
-	noCleanNames    *bool
-	researchCompany *bool
-	noResearchComp  *bool
-	verifyEmail     *bool
-	noVerifyEmail   *bool
+	resolveURN      cliflags.Toggle
+	cleanNames      cliflags.Toggle
+	researchCompany cliflags.Toggle
+	verifyEmail     cliflags.Toggle
 	concurrency     *int
 }
 
 func bindRunFlags(fs *flag.FlagSet) runFlagBindings {
 	defaults := enrich.DefaultRunOptions()
 	return runFlagBindings{
-		configPath:      fs.String("config", "", "Path to config file (default: ~/.config/enrich/config.json)"),
-		email:           fs.Bool("email", defaults.NeedEmail, "Enrich work email address"),
-		noEmail:         fs.Bool("no-email", false, "Disable email enrichment"),
-		linkedin:        fs.Bool("linkedin", defaults.NeedLinkedIn, "Enrich person LinkedIn URL"),
-		noLinkedin:      fs.Bool("no-linkedin", false, "Disable LinkedIn URL enrichment"),
-		phone:           fs.Bool("phone", defaults.NeedPhone, "Enrich phone number"),
-		noPhone:         fs.Bool("no-phone", false, "Disable phone number enrichment"),
+		configPath:      fs.String("config", "", "Path to config file (default: ~/.config/tiga/config.json)"),
+		email:           cliflags.BindToggle(fs, "email", defaults.NeedEmail, "Enrich work email address", "Disable email enrichment"),
+		linkedin:        cliflags.BindToggle(fs, "linkedin", defaults.NeedLinkedIn, "Enrich person LinkedIn URL", "Disable LinkedIn URL enrichment"),
+		phone:           cliflags.BindToggle(fs, "phone", defaults.NeedPhone, "Enrich phone number", "Disable phone number enrichment"),
 		vendors:         fs.String("vendors", "", "Comma-separated waterfall vendor order (default: all configured keys in priority order)"),
 		excludeVendors:  fs.String("exclude-vendors", "", "Comma-separated waterfall vendors to skip for this run"),
-		resolveURN:      fs.Bool("resolve-urn", defaults.ResolveURN, "Resolve LinkedIn URN / handle via Renidly API"),
-		noResolveURN:    fs.Bool("no-resolve-urn", false, "Disable Renidly LinkedIn URN resolution"),
-		cleanNames:      fs.Bool("clean-names", defaults.CleanNames, "Clean person and company names via OpenAI"),
-		noCleanNames:    fs.Bool("no-clean-names", false, "Disable OpenAI name cleaning"),
-		researchCompany: fs.Bool("research-company", defaults.ResearchCompany, "Resolve company LinkedIn/website via Renidly, Apollo, and website scraping"),
-		noResearchComp:  fs.Bool("no-research-company", false, "Disable company research"),
-		verifyEmail:     fs.Bool("verify-email", defaults.VerifyEmail, "Verify discovered emails via ZeroBounce"),
-		noVerifyEmail:   fs.Bool("no-verify-email", false, "Disable ZeroBounce email verification"),
+		resolveURN:      cliflags.BindToggle(fs, "resolve-urn", defaults.ResolveURN, "Resolve LinkedIn URN / handle via Renidly API", "Disable Renidly LinkedIn URN resolution"),
+		cleanNames:      cliflags.BindToggle(fs, "clean-names", defaults.CleanNames, "Clean person and company names via OpenAI", "Disable OpenAI name cleaning"),
+		researchCompany: cliflags.BindToggle(fs, "research-company", defaults.ResearchCompany, "Resolve company LinkedIn/website via Renidly, Apollo, and website scraping", "Disable company research"),
+		verifyEmail:     cliflags.BindToggle(fs, "verify-email", defaults.VerifyEmail, "Verify discovered emails via ZeroBounce", "Disable ZeroBounce email verification"),
 		concurrency:     fs.Int("concurrency", defaults.Concurrency, "Number of concurrent workers for CSV processing"),
 	}
 }
 
 func (b runFlagBindings) toRunOptions() enrich.RunOptions {
 	opts := enrich.DefaultRunOptions()
-	opts.NeedEmail = *b.email && !*b.noEmail
-	opts.NeedLinkedIn = *b.linkedin && !*b.noLinkedin
-	opts.NeedPhone = *b.phone && !*b.noPhone
+	opts.NeedEmail = b.email.Value()
+	opts.NeedLinkedIn = b.linkedin.Value()
+	opts.NeedPhone = b.phone.Value()
 
-	opts.ResolveURN = *b.resolveURN && !*b.noResolveURN
-	opts.CleanNames = *b.cleanNames && !*b.noCleanNames
-	opts.ResearchCompany = *b.researchCompany && !*b.noResearchComp
-	opts.VerifyEmail = *b.verifyEmail && !*b.noVerifyEmail
+	opts.ResolveURN = b.resolveURN.Value()
+	opts.CleanNames = b.cleanNames.Value()
+	opts.ResearchCompany = b.researchCompany.Value()
+	opts.VerifyEmail = b.verifyEmail.Value()
 	opts.Concurrency = *b.concurrency
 
 	if strings.TrimSpace(*b.vendors) != "" {
@@ -447,7 +342,7 @@ func runCSVCommand(ctx context.Context, args []string, stdin io.Reader, stdout, 
 		"-col-title": true, "--col-title": true,
 	}
 
-	posArgs, flagArgs := splitPositionalAndFlags(args, valueFlags)
+	posArgs, flagArgs := cliflags.SplitPositionalAndFlags(args, valueFlags)
 	if err := fs.Parse(flagArgs); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
@@ -481,34 +376,6 @@ func runCSVCommand(ctx context.Context, args []string, stdin io.Reader, stdout, 
 		reader = f
 	}
 
-	writeToFile := outFile != "" && outFile != "-"
-	if writeToFile && inFile != "" && inFile != "-" {
-		same, err := isSameFile(inFile, outFile)
-		if err != nil {
-			return err
-		}
-		if same {
-			return fmt.Errorf("output CSV %q is the same file as the input; choose a different -o path", outFile)
-		}
-	}
-
-	var writer io.Writer = stdout
-	var tmpOut *os.File
-	if writeToFile {
-		// Write to a temp file beside the target and rename on completion, so an
-		// existing output file is never truncated by a run that fails early.
-		tmpOut, err = os.CreateTemp(filepath.Dir(outFile), ".enrich-*.csv")
-		if err != nil {
-			return fmt.Errorf("failed to create output CSV %q: %w", outFile, err)
-		}
-		defer os.Remove(tmpOut.Name()) // no-op after a successful rename
-		defer tmpOut.Close()
-		if err := tmpOut.Chmod(0644); err != nil {
-			return fmt.Errorf("failed to create output CSV %q: %w", outFile, err)
-		}
-		writer = tmpOut
-	}
-
 	overrides := enrich.ColumnOverrides{
 		FirstName:       *colFirst,
 		LastName:        *colLast,
@@ -532,55 +399,9 @@ func runCSVCommand(ctx context.Context, args []string, stdin io.Reader, stdout, 
 		}
 	}
 
-	runErr := enrich.ProcessCSV(ctx, reader, writer, cfg, opts, overrides, progressFn)
-	if tmpOut == nil {
-		return runErr
-	}
-	// Keep partial results on cancellation; discard the temp file on any other failure.
-	if runErr != nil && !errors.Is(runErr, context.Canceled) {
-		return runErr
-	}
-	if err := tmpOut.Close(); err != nil {
-		return fmt.Errorf("failed to write output CSV %q: %w", outFile, err)
-	}
-	if err := os.Rename(tmpOut.Name(), outFile); err != nil {
-		return fmt.Errorf("failed to write output CSV %q: %w", outFile, err)
-	}
-	return runErr
-}
-
-// isSameFile reports whether a and b refer to the same file on disk.
-func isSameFile(a, b string) (bool, error) {
-	absA, err := filepath.Abs(a)
-	if err != nil {
-		return false, err
-	}
-	absB, err := filepath.Abs(b)
-	if err != nil {
-		return false, err
-	}
-	if absA == absB {
-		return true, nil
-	}
-	infoA, errA := os.Stat(a)
-	infoB, errB := os.Stat(b)
-	if errA != nil || errB != nil {
-		return false, nil
-	}
-	return os.SameFile(infoA, infoB), nil
-}
-
-// readKeyFromStdin reads an API key from the first line of r, e.g. `pbpaste | enrich keys set x -`.
-func readKeyFromStdin(r io.Reader) (string, error) {
-	line, err := bufio.NewReader(r).ReadString('\n')
-	if err != nil && !errors.Is(err, io.EOF) {
-		return "", fmt.Errorf("failed to read API key from stdin: %w", err)
-	}
-	key := strings.TrimSpace(line)
-	if key == "" {
-		return "", errors.New("no API key received on stdin")
-	}
-	return key, nil
+	return csvrun.WriteOutput(inFile, outFile, stdout, ".enrich-*.csv", func(w io.Writer) error {
+		return enrich.ProcessCSV(ctx, reader, w, cfg, opts, overrides, progressFn)
+	})
 }
 
 func validateFeatureKeys(cfg *enrich.Config, opts enrich.RunOptions) error {
@@ -600,26 +421,4 @@ func firstNonEmptyStr(vals ...string) string {
 		}
 	}
 	return ""
-}
-
-// splitPositionalAndFlags separates positional arguments from flags so Go's standard
-// flag package doesn't stop parsing flags when a positional argument appears first.
-func splitPositionalAndFlags(args []string, valueFlags map[string]bool) (positional []string, flags []string) {
-	for i := 0; i < len(args); i++ {
-		arg := args[i]
-		if arg == "--" {
-			positional = append(positional, args[i+1:]...)
-			break
-		}
-		if strings.HasPrefix(arg, "-") && arg != "-" {
-			flags = append(flags, arg)
-			if !strings.Contains(arg, "=") && valueFlags[arg] && i+1 < len(args) {
-				i++
-				flags = append(flags, args[i])
-			}
-		} else {
-			positional = append(positional, arg)
-		}
-	}
-	return positional, flags
 }

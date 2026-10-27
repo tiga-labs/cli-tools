@@ -6,7 +6,7 @@
 //
 //	ENRICH_E2E=1                 required to run anything
 //	ENRICH_E2E_FIXTURE=<path>    contacts file (default testdata/e2e/contacts.json)
-//	ENRICH_E2E_CONFIG=<path>     enrich config file (default ~/.config/enrich/config.json)
+//	ENRICH_E2E_CONFIG=<path>     enrich config file (default ~/.config/tiga/config.json)
 //	ENRICH_E2E_MAX_CONTACTS=<n>  cap on contacts used (default 3)
 //	ENRICH_E2E_PHONE=1           also request phone numbers (expensive credits)
 //
@@ -17,6 +17,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/tiga-labs/cli-tools/pkg/httpx"
 	"net/http"
 	"net/mail"
 	"os"
@@ -102,9 +103,9 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 
-	enrich.ProviderTransport = callCounter
+	httpx.Transport = callCounter
 	code := m.Run()
-	enrich.ProviderTransport = nil
+	httpx.Transport = nil
 
 	fmt.Print(callCounter.report())
 	os.Exit(code)
