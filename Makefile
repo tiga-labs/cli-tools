@@ -6,7 +6,7 @@ VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev
 LDFLAGS := -s -w -X main.version=$(VERSION)
 PLATFORMS := darwin/amd64 darwin/arm64 linux/amd64 linux/arm64
 
-.PHONY: all build test clean build-release $(addprefix build-,$(TOOLS)) $(addprefix build-mac-x86-,$(TOOLS))
+.PHONY: all build test test-e2e clean build-release $(addprefix build-,$(TOOLS)) $(addprefix build-mac-x86-,$(TOOLS))
 
 all: build
 
@@ -42,6 +42,12 @@ build-release:
 
 test:
 	go test -race -cover ./...
+
+# Live end-to-end tests against real vendors (spends API credits). Sources .env.e2e if present.
+# Contacts: pkg/enrich/testdata/e2e/contacts.json (see contacts.example.json).
+test-e2e:
+	@set -a; [ -f .env.e2e ] && . ./.env.e2e; set +a; \
+	ENRICH_E2E=1 go test -tags e2e -run 'E2E' -count=1 -v -timeout 30m ./pkg/enrich/
 
 clean:
 	rm -rf bin/ dist/

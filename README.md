@@ -58,6 +58,32 @@ make build-release
 make test
 ```
 
+### End-to-End Tests (live vendors)
+These tests call the real vendor APIs and **spend credits**. They never run with `make test`. You must use the `e2e` build tag and set `ENRICH_E2E=1`.
+
+1. Copy `pkg/enrich/testdata/e2e/contacts.example.json` to `contacts.json` in the same folder and add 2–3 real contacts. This file is gitignored.
+2. Give the tests your API keys in one of two ways:
+   - Run `enrich keys set <vendor> <key>`.
+   - Put `*_API_KEY=...` lines in a gitignored `.env.e2e` at the repo root.
+
+   Any vendor without a key is skipped.
+3. Run `make test-e2e`.
+
+The tests check only the shape of each result: status, email syntax, canonical LinkedIn URLs, that a source field is set, and that no API key appears in errors. They do not check exact values. At the end, the run prints the number of HTTP calls made to each vendor.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `ENRICH_E2E_MAX_CONTACTS` | `3` | Maximum number of fixture contacts to use |
+| `ENRICH_E2E_PHONE` | off | Set to `1` to also request phone numbers (phone lookups cost more credits) |
+| `ENRICH_E2E_FIXTURE` | `testdata/e2e/contacts.json` | Contacts file to use |
+| `ENRICH_E2E_CONFIG` | `~/.config/enrich/config.json` | Config file to read keys from |
+
+To test one vendor, set `ENRICH_E2E=1` and run:
+
+```bash
+go test -tags e2e -run 'E2EWaterfallVendor/hunter' -count=1 -v ./pkg/enrich/
+```
+
 ### Adding a New Tool
 1. Create `cmd/<tool-name>/main.go` (and optional library code under `pkg/<tool-name>/`).
 2. `make build` and `make build-release` will automatically discover `cmd/<tool-name>` and build binaries for all target platforms.

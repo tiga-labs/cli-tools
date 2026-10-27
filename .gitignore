@@ -2,3 +2,8 @@ bin/
 dist/
 *.out
 .DS_Store
+
+# e2e test inputs (real contacts and API keys)
+pkg/enrich/testdata/e2e/contacts.json
+.env.e2e
+runoutput.txt
