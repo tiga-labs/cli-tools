@@ -6,8 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"github.com/tiga-labs/cli-tools/pkg/urlutil"
-	"net/http"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -36,6 +34,14 @@ func hostFromContact(row *ContactRecord) string {
 		}
 	}
 	return ""
+}
+
+// ErrSkipped marks a vendor call that was not made because the row lacked required inputs.
+// The pipeline does not count skipped calls as errors.
+var ErrSkipped = errors.New("skipped")
+
+func skipf(format string, a ...any) error {
+	return fmt.Errorf("%w: "+format, append([]any{ErrSkipped}, a...)...)
 }
 
 // redactedError wraps an error whose message has had secrets removed, while
@@ -86,11 +92,11 @@ func FindymailFindFromName(ctx context.Context, apiKey string, row *ContactRecor
 		domainOrCompany = strings.TrimSpace(row.CompanyName)
 	}
 	if domainOrCompany == "" {
-		return errors.New("no website, domain, or company name for FindymailFindFromName")
+		return skipf("no website, domain, or company name for FindymailFindFromName")
 	}
 	fullName := strings.TrimSpace(row.FirstName + " " + row.LastName)
 	if fullName == "" {
-		return errors.New("no person name for FindymailFindFromName")
+		return skipf("no person name for FindymailFindFromName")
 	}
 
 	var res FindymailResponse
@@ -126,7 +132,7 @@ func FindymailFindFromLinkedIn(ctx context.Context, apiKey string, row *ContactR
 		return errors.New("nil args to FindymailFindFromLinkedIn")
 	}
 	if strings.TrimSpace(row.PersonLinkedIn) == "" {
-		return errors.New("no linkedin url for FindymailFindFromLinkedIn")
+		return skipf("no linkedin url for FindymailFindFromLinkedIn")
 	}
 
 	lidId := row.PersonLinkedIn
@@ -166,7 +172,7 @@ func FindymailFindPhoneFromLinkedIn(ctx context.Context, apiKey string, row *Con
 		return errors.New("nil args to FindymailFindPhoneFromLinkedIn")
 	}
 	if strings.TrimSpace(row.PersonLinkedIn) == "" {
-		return errors.New("no linkedin url for FindymailFindPhoneFromLinkedIn")
+		return skipf("no linkedin url for FindymailFindPhoneFromLinkedIn")
 	}
 
 	lidId := urlutil.LinkedinUrlToLinkedinId(row.PersonLinkedIn)
@@ -260,16 +266,9 @@ func buildProspeoReqData(row *ContactRecord) prospeoEnrichRequestData {
 	}
 }
 
-func ProspeoFindLinkedInURL(ctx context.Context, apiKey string, row *ContactRecord) error {
-	if ctx == nil || row == nil {
-		return errors.New("nil args to ProspeoFindLinkedInURL")
-	}
-	reqData := buildProspeoReqData(row)
-	if reqData.CompanyWebsite == "" && reqData.CompanyName == "" {
-		return errors.New("no website or company name for ProspeoFindLinkedInURL")
-	}
-
-	reqBody := prospeoEnrichRequest{Data: reqData}
+// prospeoEnrich posts to /enrich-person. A NO_MATCH response is a normal "not found"
+// outcome and is returned as (nil, nil) rather than an error.
+func prospeoEnrich(ctx context.Context, apiKey string, reqBody prospeoEnrichRequest, label string) (*prospeoResponse, error) {
 	var res prospeoResponse
 	resp, err := newProviderClient().R().
 		SetContext(ctx).
@@ -279,54 +278,47 @@ func ProspeoFindLinkedInURL(ctx context.Context, apiKey string, row *ContactReco
 		SetBody(&reqBody).
 		Post("https://api.prospeo.io/enrich-person")
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if resp.StatusCode() >= 200 && resp.StatusCode() < 300 {
-		if row.PersonLinkedIn == "" && strings.TrimSpace(res.Person.LinkedinURL) != "" {
-			row.PersonLinkedIn = strings.TrimSpace(res.Person.LinkedinURL)
-			row.PersonLinkedInSource = VendorProspeo
-		}
-		return nil
+		return &res, nil
 	}
-	return fmt.Errorf("prospeo error (%d): %s", resp.StatusCode(), resp.Body())
+	var errRes prospeoResponse
+	if json.Unmarshal(resp.Body(), &errRes) == nil && errRes.ErrorCode == "NO_MATCH" {
+		return nil, nil
+	}
+	return nil, fmt.Errorf("%s (%d): %s", label, resp.StatusCode(), resp.Body())
 }
 
-func ProspeoFindFromName(ctx context.Context, apiKey string, row *ContactRecord) error {
+// ProspeoFindPerson looks up a person's LinkedIn URL and/or verified email in a single
+// /enrich-person call.
+func ProspeoFindPerson(ctx context.Context, apiKey string, row *ContactRecord, needEmail, needLinkedIn bool) error {
 	if ctx == nil || row == nil {
-		return errors.New("nil args to ProspeoFindFromName")
+		return errors.New("nil args to ProspeoFindPerson")
 	}
 	reqData := buildProspeoReqData(row)
 	if reqData.CompanyWebsite == "" && reqData.CompanyName == "" {
-		return errors.New("no website or company name for ProspeoFindFromName")
+		return skipf("no website or company name for ProspeoFindPerson")
 	}
 
-	reqBody := prospeoEnrichRequest{
-		OnlyVerifiedEmail: true,
+	// only_verified_email returns NO_MATCH (free) when there is no verified email, which would
+	// also discard the LinkedIn URL, so only use it when the email is all we need.
+	res, err := prospeoEnrich(ctx, apiKey, prospeoEnrichRequest{
+		OnlyVerifiedEmail: needEmail && !needLinkedIn,
 		Data:              reqData,
-	}
-	var res prospeoResponse
-	resp, err := newProviderClient().R().
-		SetContext(ctx).
-		SetHeader("Content-Type", "application/json").
-		SetHeader("X-KEY", apiKey).
-		SetResult(&res).
-		SetBody(&reqBody).
-		Post("https://api.prospeo.io/enrich-person")
-	if err != nil {
+	}, "prospeo error")
+	if err != nil || res == nil {
 		return err
 	}
-	if resp.StatusCode() >= 200 && resp.StatusCode() < 300 {
-		if row.Email == "" && res.Person.Email.Status == "VERIFIED" && strings.TrimSpace(res.Person.Email.Email) != "" {
-			row.Email = strings.TrimSpace(res.Person.Email.Email)
-			row.EmailSource = VendorProspeo
-		}
-		if row.PersonLinkedIn == "" && strings.TrimSpace(res.Person.LinkedinURL) != "" {
-			row.PersonLinkedIn = strings.TrimSpace(res.Person.LinkedinURL)
-			row.PersonLinkedInSource = VendorProspeo
-		}
-		return nil
+	if needEmail && row.Email == "" && res.Person.Email.Status == "VERIFIED" && strings.TrimSpace(res.Person.Email.Email) != "" {
+		row.Email = strings.TrimSpace(res.Person.Email.Email)
+		row.EmailSource = VendorProspeo
 	}
-	return fmt.Errorf("prospeo error (%d): %s", resp.StatusCode(), resp.Body())
+	if row.PersonLinkedIn == "" && strings.TrimSpace(res.Person.LinkedinURL) != "" {
+		row.PersonLinkedIn = strings.TrimSpace(res.Person.LinkedinURL)
+		row.PersonLinkedInSource = VendorProspeo
+	}
+	return nil
 }
 
 func ProspeoFindMobile(ctx context.Context, apiKey string, row *ContactRecord) error {
@@ -334,33 +326,21 @@ func ProspeoFindMobile(ctx context.Context, apiKey string, row *ContactRecord) e
 		return errors.New("nil args to ProspeoFindMobile")
 	}
 	if urlutil.LinkedinUrlToLinkedinId(row.PersonLinkedIn) == "" {
-		return fmt.Errorf("valid linkedin url required for ProspeoFindMobile")
+		return skipf("valid linkedin url required for ProspeoFindMobile")
 	}
-	reqData := buildProspeoReqData(row)
-	reqBody := prospeoEnrichRequest{
+	res, err := prospeoEnrich(ctx, apiKey, prospeoEnrichRequest{
 		OnlyVerifiedMobile: true,
 		EnrichMobile:       true,
-		Data:               reqData,
-	}
-	var res prospeoResponse
-	resp, err := newProviderClient().R().
-		SetContext(ctx).
-		SetHeader("Content-Type", "application/json").
-		SetHeader("X-KEY", apiKey).
-		SetResult(&res).
-		SetBody(&reqBody).
-		Post("https://api.prospeo.io/enrich-person")
-	if err != nil {
+		Data:               buildProspeoReqData(row),
+	}, "prospeo mobile error")
+	if err != nil || res == nil {
 		return err
 	}
-	if resp.StatusCode() >= 200 && resp.StatusCode() < 300 {
-		if row.Phone == "" && res.Person.Mobile.Status == "VERIFIED" && strings.TrimSpace(res.Person.Mobile.Mobile) != "" {
-			row.Phone = strings.TrimSpace(res.Person.Mobile.Mobile)
-			row.PhoneSource = VendorProspeo
-		}
-		return nil
+	if row.Phone == "" && res.Person.Mobile.Status == "VERIFIED" && strings.TrimSpace(res.Person.Mobile.Mobile) != "" {
+		row.Phone = strings.TrimSpace(res.Person.Mobile.Mobile)
+		row.PhoneSource = VendorProspeo
 	}
-	return fmt.Errorf("prospeo mobile error (%d): %s", resp.StatusCode(), resp.Body())
+	return nil
 }
 
 // ============================================================================
@@ -415,11 +395,10 @@ type apolloOrgResponse struct {
 	} `json:"organization"`
 }
 
-func ApolloEnrichPerson(ctx context.Context, apiKey string, row *ContactRecord, callCount int) error {
+func ApolloEnrichPerson(ctx context.Context, apiKey string, row *ContactRecord) error {
 	if ctx == nil || row == nil {
 		return errors.New("nil args to ApolloEnrichPerson")
 	}
-	callCount++
 
 	domain := hostFromContact(row)
 	if domain == "" && strings.Contains(row.Email, "@") {
@@ -460,21 +439,6 @@ func ApolloEnrichPerson(ctx context.Context, apiKey string, row *ContactRecord, 
 		return err
 	}
 
-	if resp.StatusCode() == 429 {
-		wait, err := strconv.Atoi(resp.Header().Get("Retry-After"))
-		if err != nil || wait <= 0 {
-			wait = 5
-		}
-		if wait > 600 || callCount > 5 {
-			return errors.New("apollo rate limit exceeded")
-		}
-		select {
-		case <-time.After(time.Duration(wait) * time.Second):
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-		return ApolloEnrichPerson(ctx, apiKey, row, callCount)
-	}
 	if resp.StatusCode() < 200 || resp.StatusCode() >= 300 {
 		return fmt.Errorf("apollo match non-2xx (%d): %s", resp.StatusCode(), resp.Body())
 	}
@@ -483,14 +447,13 @@ func ApolloEnrichPerson(ctx context.Context, apiKey string, row *ContactRecord, 
 	return nil
 }
 
-func ApolloSearchPerson(ctx context.Context, apiKey string, row *ContactRecord, callCount int) error {
+func ApolloSearchPerson(ctx context.Context, apiKey string, row *ContactRecord) error {
 	if ctx == nil || row == nil {
 		return errors.New("nil args to ApolloSearchPerson")
 	}
 	if strings.TrimSpace(row.FirstName) == "" || strings.TrimSpace(row.LastName) == "" || strings.TrimSpace(row.CompanyName) == "" {
 		return nil
 	}
-	callCount++
 
 	var res apolloSearchResponse
 	keywords := strings.TrimSpace(row.FirstName + " " + row.LastName + " " + row.CompanyName)
@@ -508,21 +471,6 @@ func ApolloSearchPerson(ctx context.Context, apiKey string, row *ContactRecord, 
 		return err
 	}
 
-	if resp.StatusCode() == 429 {
-		wait, err := strconv.Atoi(resp.Header().Get("Retry-After"))
-		if err != nil || wait <= 0 {
-			wait = 5
-		}
-		if wait > 600 || callCount > 5 {
-			return errors.New("apollo search rate limit exceeded")
-		}
-		select {
-		case <-time.After(time.Duration(wait) * time.Second):
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-		return ApolloSearchPerson(ctx, apiKey, row, callCount)
-	}
 	if resp.StatusCode() < 200 || resp.StatusCode() >= 300 {
 		return fmt.Errorf("apollo search non-2xx (%d): %s", resp.StatusCode(), resp.Body())
 	}
@@ -645,7 +593,7 @@ func LushaEnrichContact(ctx context.Context, apiKey string, row *ContactRecord, 
 	} else {
 		host := hostFromContact(row)
 		if row.FirstName == "" || row.LastName == "" || (host == "" && row.CompanyName == "") {
-			return errors.New("insufficient identifiers for LushaEnrichContact")
+			return skipf("insufficient identifiers for LushaEnrichContact")
 		}
 		queryParams["firstName"] = row.FirstName
 		queryParams["lastName"] = row.LastName
@@ -675,7 +623,7 @@ func LushaEnrichContact(ctx context.Context, apiKey string, row *ContactRecord, 
 		return err
 	}
 	if resp.StatusCode() == 404 {
-		return errors.New("lusha found no match for this contact")
+		return nil // no match is a normal "not found" outcome
 	}
 	if resp.StatusCode() < 200 || resp.StatusCode() >= 300 {
 		return fmt.Errorf("lusha non-2xx (%d): %s", resp.StatusCode(), resp.Body())
@@ -807,7 +755,7 @@ func SeamlessResearchContact(ctx context.Context, apiKey string, row *ContactRec
 	}
 
 	if input.LiProfileUrl == "" && (input.ContactName == "" || (input.Domain == "" && input.CompanyName == "")) {
-		return errors.New("insufficient identifiers for SeamlessResearchContact")
+		return skipf("insufficient identifiers for SeamlessResearchContact")
 	}
 
 	var submitRes seamlessResearchSubmitResponse
@@ -964,7 +912,7 @@ func DropcontactFindFromName(ctx context.Context, apiKey string, row *ContactRec
 		}
 	}
 	if company == "" && row.FirstName == "" && row.LastName == "" {
-		return errors.New("insufficient identifiers for DropcontactFindFromName")
+		return skipf("insufficient identifiers for DropcontactFindFromName")
 	}
 
 	item := map[string]string{
@@ -1084,11 +1032,11 @@ func HunterFindFromName(ctx context.Context, apiKey string, row *ContactRecord) 
 		return errors.New("nil args to HunterFindFromName")
 	}
 	if row.FirstName == "" || row.LastName == "" {
-		return errors.New("first_name and last_name are required for Hunter")
+		return skipf("first_name and last_name are required for Hunter")
 	}
 	domain := hostFromContact(row)
 	if domain == "" && row.CompanyName == "" {
-		return errors.New("domain or company name is required for Hunter")
+		return skipf("domain or company name is required for Hunter")
 	}
 
 	var res hunterEmailFinderResponse
@@ -1158,7 +1106,7 @@ func DatagmaFindFromName(ctx context.Context, apiKey string, row *ContactRecord)
 		company = strings.TrimSpace(row.CompanyName)
 	}
 	if company == "" {
-		return errors.New("no website, domain, or company name for DatagmaFindFromName")
+		return skipf("no website, domain, or company name for DatagmaFindFromName")
 	}
 
 	var res datagmaFindByNameResponse
@@ -1194,14 +1142,14 @@ func DatagmaEnrichPerson(ctx context.Context, apiKey string, row *ContactRecord)
 		return errors.New("nil args to DatagmaEnrichPerson")
 	}
 	if row.FirstName == "" || row.LastName == "" {
-		return errors.New("first and last name required for DatagmaEnrichPerson")
+		return skipf("first and last name required for DatagmaEnrichPerson")
 	}
 	company := hostFromContact(row)
 	if company == "" {
 		company = strings.TrimSpace(row.CompanyName)
 	}
 	if company == "" {
-		return errors.New("no website, domain, or company name for DatagmaEnrichPerson")
+		return skipf("no website, domain, or company name for DatagmaEnrichPerson")
 	}
 
 	var res datagmaEnrichPersonResponse
@@ -1276,7 +1224,7 @@ func LeadIQFindByNameAndCompany(ctx context.Context, apiKey string, row *Contact
 		company = strings.TrimSpace(row.CompanyName)
 	}
 	if company == "" {
-		return errors.New("no website, domain, or company name for LeadIQFindByNameAndCompany")
+		return skipf("no website, domain, or company name for LeadIQFindByNameAndCompany")
 	}
 
 	gqlQuery := `query ($input: SearchPeopleInput!) {
@@ -1306,32 +1254,23 @@ func LeadIQFindByNameAndCompany(ctx context.Context, apiKey string, row *Contact
 		},
 	}
 
-	reqBytes, _ := json.Marshal(payload)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.leadiq.com/graphql", strings.NewReader(string(reqBytes)))
+	resp, err := newProviderClient().R().
+		SetContext(ctx).
+		SetBasicAuth(apiKey, "").
+		SetHeader("Content-Type", "application/json").
+		SetBody(payload).
+		Post("https://api.leadiq.com/graphql")
 	if err != nil {
 		return err
 	}
-	req.SetBasicAuth(apiKey, "")
-	req.Header.Set("Content-Type", "application/json")
-
-	transport := http.DefaultTransport
-	if ProviderTransport != nil {
-		transport = ProviderTransport
-	}
-	client := &http.Client{Transport: transport, Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("leadiq non-2xx status %d", resp.StatusCode)
+	if resp.StatusCode() < 200 || resp.StatusCode() >= 300 {
+		return fmt.Errorf("leadiq non-2xx status %d", resp.StatusCode())
 	}
 
+	// Decode manually rather than via SetResult so a missing JSON Content-Type is not silently ignored.
 	var gqlRes leadIQGraphQLResponse
-	if err := json.NewDecoder(resp.Body).Decode(&gqlRes); err != nil {
-		return err
+	if err := json.Unmarshal(resp.Body(), &gqlRes); err != nil {
+		return fmt.Errorf("leadiq: failed to parse response: %w", err)
 	}
 	if len(gqlRes.Errors) > 0 {
 		return fmt.Errorf("leadiq graphql error: %s", gqlRes.Errors[0].Message)

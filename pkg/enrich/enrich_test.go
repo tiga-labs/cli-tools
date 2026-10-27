@@ -603,3 +603,220 @@ func TestProcessCSVStreamsInOrderAndReportsCancel(t *testing.T) {
 		}
 	}
 }
+
+// hostCounter wraps a handler and counts requests per host.
+type hostCounter struct {
+	counts  map[string]int
+	handler func(req *http.Request) (*http.Response, error)
+}
+
+func newHostCounter(handler func(req *http.Request) (*http.Response, error)) *hostCounter {
+	return &hostCounter{counts: map[string]int{}, handler: handler}
+}
+
+func (h *hostCounter) RoundTrip(req *http.Request) (*http.Response, error) {
+	h.counts[req.URL.Host]++
+	return h.handler(req)
+}
+
+func TestSkippedVendorIsNotFoundNotError(t *testing.T) {
+	enrich.ProviderTransport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		t.Errorf("no vendor should be called for a row without inputs, got %s", req.URL)
+		return jsonHTTPResponse(500, "{}"), nil
+	})
+	defer func() { enrich.ProviderTransport = nil }()
+
+	cfg := &enrich.Config{Keys: map[string]string{enrich.VendorHunter: "hu-key"}}
+	opts := enrich.DefaultRunOptions()
+	opts.NeedLinkedIn = false
+	row := enrich.ContactRecord{Title: "CTO"} // no name, company, or domain
+
+	if err := enrich.EnrichContact(context.Background(), cfg, opts, &row); err != nil {
+		t.Fatalf("EnrichContact failed: %v", err)
+	}
+	if row.Status != "not_found" || row.Error != "" {
+		t.Fatalf("expected not_found with no error, got status=%q error=%q", row.Status, row.Error)
+	}
+}
+
+func TestProspeoNoMatchIsNotFound(t *testing.T) {
+	counter := newHostCounter(func(req *http.Request) (*http.Response, error) {
+		return jsonHTTPResponse(400, `{"error":true,"error_code":"NO_MATCH"}`), nil
+	})
+	enrich.ProviderTransport = counter
+	defer func() { enrich.ProviderTransport = nil }()
+
+	cfg := &enrich.Config{Keys: map[string]string{enrich.VendorProspeo: "pr-key"}}
+	row := enrich.ContactRecord{FirstName: "Jane", LastName: "Doe", Domain: "acme.com"}
+	if err := enrich.EnrichContact(context.Background(), cfg, enrich.DefaultRunOptions(), &row); err != nil {
+		t.Fatalf("EnrichContact failed: %v", err)
+	}
+	if row.Status != "not_found" || row.Error != "" {
+		t.Fatalf("expected not_found with no error, got status=%q error=%q", row.Status, row.Error)
+	}
+	if got := counter.counts["api.prospeo.io"]; got != 1 {
+		t.Fatalf("expected 1 Prospeo call, got %d", got)
+	}
+}
+
+func TestMultipleVendorErrorsAreAllReported(t *testing.T) {
+	enrich.ProviderTransport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return jsonHTTPResponse(500, `{"message":"boom"}`), nil
+	})
+	defer func() { enrich.ProviderTransport = nil }()
+
+	cfg := &enrich.Config{Keys: map[string]string{
+		enrich.VendorFindymail: "fm-key",
+		enrich.VendorHunter:    "hu-key",
+	}}
+	opts := enrich.DefaultRunOptions()
+	opts.NeedLinkedIn = false
+	row := enrich.ContactRecord{FirstName: "Jane", LastName: "Doe", Domain: "acme.com"}
+	if err := enrich.EnrichContact(context.Background(), cfg, opts, &row); err != nil {
+		t.Fatalf("EnrichContact failed: %v", err)
+	}
+	if row.Status != "error" || !strings.Contains(row.Error, "findymail") || !strings.Contains(row.Error, "hunter") || !strings.Contains(row.Error, "; ") {
+		t.Fatalf("expected both vendor errors joined, got status=%q error=%q", row.Status, row.Error)
+	}
+}
+
+func TestProspeoEmailAndLinkedInInOneCall(t *testing.T) {
+	counter := newHostCounter(func(req *http.Request) (*http.Response, error) {
+		var body map[string]any
+		_ = json.NewDecoder(req.Body).Decode(&body)
+		if body["only_verified_email"] == true {
+			t.Errorf("only_verified_email must be off when the LinkedIn URL is also needed")
+		}
+		return jsonHTTPResponse(200, map[string]any{
+			"person": map[string]any{
+				"linkedin_url": "https://www.linkedin.com/in/janedoe",
+				"email":        map[string]any{"status": "VERIFIED", "email": "jane@acme.com"},
+			},
+		}), nil
+	})
+	enrich.ProviderTransport = counter
+	defer func() { enrich.ProviderTransport = nil }()
+
+	cfg := &enrich.Config{Keys: map[string]string{enrich.VendorProspeo: "pr-key"}}
+	row := enrich.ContactRecord{FirstName: "Jane", LastName: "Doe", Domain: "acme.com"}
+	if err := enrich.EnrichContact(context.Background(), cfg, enrich.DefaultRunOptions(), &row); err != nil {
+		t.Fatalf("EnrichContact failed: %v", err)
+	}
+	if got := counter.counts["api.prospeo.io"]; got != 1 {
+		t.Fatalf("expected 1 Prospeo call for email + LinkedIn, got %d", got)
+	}
+	if row.Email != "jane@acme.com" || row.EmailSource != enrich.VendorProspeo ||
+		row.PersonLinkedIn != "https://www.linkedin.com/in/janedoe" || row.PersonLinkedInSource != enrich.VendorProspeo {
+		t.Fatalf("expected email and LinkedIn from Prospeo, got %+v", row)
+	}
+}
+
+func TestZeroBounceErrorIsCheckedOnce(t *testing.T) {
+	counter := newHostCounter(func(req *http.Request) (*http.Response, error) {
+		switch req.URL.Host {
+		case "app.findymail.com":
+			return jsonHTTPResponse(200, map[string]any{"contact": map[string]any{"email": "jane@acme.com"}}), nil
+		case "api.zerobounce.net":
+			return jsonHTTPResponse(500, `{"error":"internal"}`), nil
+		}
+		// Prospeo and Lusha find nothing, so the waterfall keeps going for the LinkedIn URL.
+		return jsonHTTPResponse(404, "{}"), nil
+	})
+	enrich.ProviderTransport = counter
+	defer func() { enrich.ProviderTransport = nil }()
+
+	cfg := &enrich.Config{Keys: map[string]string{
+		enrich.VendorFindymail:  "fm-key",
+		enrich.VendorProspeo:    "pr-key",
+		enrich.VendorLusha:      "lu-key",
+		enrich.VendorZeroBounce: "zb-key",
+	}}
+	opts := enrich.DefaultRunOptions()
+	opts.VerifyEmail = true
+	row := enrich.ContactRecord{FirstName: "Jane", LastName: "Doe", Domain: "acme.com"}
+	if err := enrich.EnrichContact(context.Background(), cfg, opts, &row); err != nil {
+		t.Fatalf("EnrichContact failed: %v", err)
+	}
+	if counter.counts["api.prospeo.io"] == 0 || counter.counts["api.lusha.com"] == 0 {
+		t.Fatalf("expected waterfall to continue past ZeroBounce error, calls=%v", counter.counts)
+	}
+	if got := counter.counts["api.zerobounce.net"]; got != 1 {
+		t.Fatalf("expected 1 ZeroBounce call, got %d (calls=%v)", got, counter.counts)
+	}
+	if row.Email != "jane@acme.com" || row.EmailVerified != "error" {
+		t.Fatalf("expected email kept with EmailVerified=error, got email=%q verified=%q", row.Email, row.EmailVerified)
+	}
+}
+
+func withFastRetries(t *testing.T) {
+	t.Helper()
+	prev := enrich.ProviderRetryMaxWait
+	enrich.ProviderRetryMaxWait = 5 * time.Millisecond
+	t.Cleanup(func() {
+		enrich.ProviderRetryMaxWait = prev
+		enrich.ProviderTransport = nil
+	})
+}
+
+func TestRateLimitedRequestIsRetried(t *testing.T) {
+	withFastRetries(t)
+	calls := 0
+	enrich.ProviderTransport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		calls++
+		if calls == 1 {
+			return jsonHTTPResponse(429, "{}"), nil
+		}
+		return jsonHTTPResponse(200, map[string]any{
+			"data": map[string]any{"email": "jane@acme.com", "score": 90},
+		}), nil
+	})
+
+	row := enrich.ContactRecord{FirstName: "Jane", LastName: "Doe", Domain: "acme.com"}
+	if err := enrich.HunterFindFromName(context.Background(), "hu-key", &row); err != nil {
+		t.Fatalf("HunterFindFromName failed: %v", err)
+	}
+	if calls != 2 || row.Email != "jane@acme.com" {
+		t.Fatalf("expected 1 retry then success, got calls=%d email=%q", calls, row.Email)
+	}
+}
+
+func TestRateLimitRetriesAreBoundedAndCapRetryAfter(t *testing.T) {
+	withFastRetries(t)
+	calls := 0
+	enrich.ProviderTransport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		calls++
+		resp := jsonHTTPResponse(429, "{}")
+		resp.Header.Set("Retry-After", "120") // must be capped by ProviderRetryMaxWait
+		return resp, nil
+	})
+
+	start := time.Now()
+	row := enrich.ContactRecord{FirstName: "Jane", LastName: "Doe", Domain: "acme.com"}
+	err := enrich.ApolloEnrichPerson(context.Background(), "ap-key", &row)
+	if err == nil || !strings.Contains(err.Error(), "429") {
+		t.Fatalf("expected 429 error after retries, got %v", err)
+	}
+	if want := 1 + enrich.ProviderRetryCount; calls != want {
+		t.Fatalf("expected %d calls (1 + %d retries), got %d", want, enrich.ProviderRetryCount, calls)
+	}
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Fatalf("Retry-After was not capped (took %s)", elapsed)
+	}
+}
+
+func TestTransportErrorIsNotRetried(t *testing.T) {
+	withFastRetries(t)
+	calls := 0
+	enrich.ProviderTransport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		calls++
+		return nil, errors.New("connection reset")
+	})
+
+	row := enrich.ContactRecord{FirstName: "Jane", LastName: "Doe", Domain: "acme.com"}
+	if err := enrich.DropcontactFindFromName(context.Background(), "dc-key", &row); err == nil {
+		t.Fatalf("expected transport error")
+	}
+	if calls != 1 {
+		t.Fatalf("transport errors must not be retried (non-idempotent submit), got %d calls", calls)
+	}
+}

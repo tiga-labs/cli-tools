@@ -32,7 +32,13 @@ func EnrichContact(ctx context.Context, cfg *Config, opts RunOptions, row *Conta
 	row.Website = strings.TrimSpace(row.Website)
 	row.CompanyLinkedIn = strings.TrimSpace(row.CompanyLinkedIn)
 
-	var lastErr error
+	// errs collects real vendor failures; skipped calls (ErrSkipped) are not failures.
+	var errs []error
+	record := func(err error) {
+		if err != nil && !errors.Is(err, ErrSkipped) {
+			errs = append(errs, err)
+		}
+	}
 
 	// 1. Pre-processor: Resolve LinkedIn URN / Handle via Renidly
 	if opts.ResolveURN {
@@ -40,9 +46,7 @@ func EnrichContact(ctx context.Context, cfg *Config, opts RunOptions, row *Conta
 		hasURN := row.ExtractRapidURN() != ""
 		missingDetails := row.PersonLinkedIn == "" || row.CompanyLinkedIn == "" || row.CompanyName == "" || row.FirstName == "" || row.LastName == ""
 		if renidlyKey != "" && (hasURN || (row.PersonLinkedIn != "" && missingDetails)) {
-			if err := RenidlyEnrichPerson(ctx, renidlyKey, row); err != nil {
-				lastErr = err
-			}
+			record(RenidlyEnrichPerson(ctx, renidlyKey, row))
 		}
 	}
 
@@ -53,7 +57,7 @@ func EnrichContact(ctx context.Context, cfg *Config, opts RunOptions, row *Conta
 			if row.FirstName != "" || row.LastName != "" {
 				cFirst, cLast, err := CleanFirstAndLastName(ctx, openAIKey, row.FirstName, row.LastName)
 				if err != nil {
-					lastErr = err
+					record(err)
 				} else {
 					if cFirst != "" {
 						row.FirstName = cFirst
@@ -66,7 +70,7 @@ func EnrichContact(ctx context.Context, cfg *Config, opts RunOptions, row *Conta
 			if row.CompanyName != "" {
 				cCompany, err := CleanAccountName(ctx, openAIKey, row.CompanyName)
 				if err != nil {
-					lastErr = err
+					record(err)
 				} else if cCompany != "" {
 					row.CompanyName = cCompany
 				}
@@ -92,7 +96,7 @@ func EnrichContact(ctx context.Context, cfg *Config, opts RunOptions, row *Conta
 	}
 
 	// 5. Evaluate initial NeedState (including ZeroBounce check if an email was already present)
-	verifiedCache := map[string]bool{}
+	verifiedCache := map[string]string{}
 	need := evaluateNeedState(ctx, cfg, opts, row, verifiedCache)
 
 	// 6. Run Waterfall Loop
@@ -115,13 +119,9 @@ func EnrichContact(ctx context.Context, cfg *Config, opts RunOptions, row *Conta
 			case VendorFindymail:
 				if need.StillNeedEmail {
 					if row.PersonLinkedIn != "" {
-						if err := FindymailFindFromLinkedIn(ctx, apiKey, row); err != nil {
-							lastErr = err
-						}
+						record(FindymailFindFromLinkedIn(ctx, apiKey, row))
 					} else {
-						if err := FindymailFindFromName(ctx, apiKey, row); err != nil {
-							lastErr = err
-						}
+						record(FindymailFindFromName(ctx, apiKey, row))
 					}
 					need = evaluateNeedState(ctx, cfg, opts, row, verifiedCache)
 					if !need.ShouldContinue {
@@ -129,9 +129,7 @@ func EnrichContact(ctx context.Context, cfg *Config, opts RunOptions, row *Conta
 					}
 				}
 				if need.StillNeedPhone && row.PersonLinkedIn != "" {
-					if err := FindymailFindPhoneFromLinkedIn(ctx, apiKey, row); err != nil {
-						lastErr = err
-					}
+					record(FindymailFindPhoneFromLinkedIn(ctx, apiKey, row))
 					need = evaluateNeedState(ctx, cfg, opts, row, verifiedCache)
 					if !need.ShouldContinue {
 						break
@@ -139,101 +137,67 @@ func EnrichContact(ctx context.Context, cfg *Config, opts RunOptions, row *Conta
 				}
 
 			case VendorProspeo:
-				if need.StillNeedLI {
-					if err := ProspeoFindLinkedInURL(ctx, apiKey, row); err != nil {
-						lastErr = err
-					}
-					need = evaluateNeedState(ctx, cfg, opts, row, verifiedCache)
-					if !need.ShouldContinue {
-						break
-					}
-				}
-				if need.StillNeedEmail {
-					if err := ProspeoFindFromName(ctx, apiKey, row); err != nil {
-						lastErr = err
-					}
+				if need.StillNeedEmail || need.StillNeedLI {
+					record(ProspeoFindPerson(ctx, apiKey, row, need.StillNeedEmail, need.StillNeedLI))
 					need = evaluateNeedState(ctx, cfg, opts, row, verifiedCache)
 					if !need.ShouldContinue {
 						break
 					}
 				}
 				if need.StillNeedPhone {
-					if err := ProspeoFindMobile(ctx, apiKey, row); err != nil {
-						lastErr = err
-					}
+					record(ProspeoFindMobile(ctx, apiKey, row))
 					need = evaluateNeedState(ctx, cfg, opts, row, verifiedCache)
-					if !need.ShouldContinue {
-						break
-					}
 				}
 
 			case VendorApollo:
-				if err := ApolloEnrichPerson(ctx, apiKey, row, 0); err != nil {
-					lastErr = err
-				}
+				record(ApolloEnrichPerson(ctx, apiKey, row))
 				need = evaluateNeedState(ctx, cfg, opts, row, verifiedCache)
 				if !need.ShouldContinue {
 					break
 				}
-				if err := ApolloSearchPerson(ctx, apiKey, row, 0); err != nil {
-					lastErr = err
-				}
+				record(ApolloSearchPerson(ctx, apiKey, row))
 				need = evaluateNeedState(ctx, cfg, opts, row, verifiedCache)
 
 			case VendorLusha:
 				if need.StillNeedEmail || need.StillNeedPhone || need.StillNeedLI {
-					if err := LushaEnrichContact(ctx, apiKey, row, need.StillNeedEmail, need.StillNeedPhone); err != nil {
-						lastErr = err
-					}
+					record(LushaEnrichContact(ctx, apiKey, row, need.StillNeedEmail, need.StillNeedPhone))
 					need = evaluateNeedState(ctx, cfg, opts, row, verifiedCache)
 				}
 
 			case VendorSeamless:
 				if need.StillNeedEmail || need.StillNeedPhone || need.StillNeedLI {
-					if err := SeamlessResearchContact(ctx, apiKey, row); err != nil {
-						lastErr = err
-					}
+					record(SeamlessResearchContact(ctx, apiKey, row))
 					need = evaluateNeedState(ctx, cfg, opts, row, verifiedCache)
 				}
 
 			case VendorDropcontact:
 				if need.StillNeedEmail || need.StillNeedPhone || need.StillNeedLI {
-					if err := DropcontactFindFromName(ctx, apiKey, row); err != nil {
-						lastErr = err
-					}
+					record(DropcontactFindFromName(ctx, apiKey, row))
 					need = evaluateNeedState(ctx, cfg, opts, row, verifiedCache)
 				}
 
 			case VendorHunter:
 				if need.StillNeedEmail {
-					if err := HunterFindFromName(ctx, apiKey, row); err != nil {
-						lastErr = err
-					}
+					record(HunterFindFromName(ctx, apiKey, row))
 					need = evaluateNeedState(ctx, cfg, opts, row, verifiedCache)
 				}
 
 			case VendorDatagma:
 				if need.StillNeedEmail {
-					if err := DatagmaFindFromName(ctx, apiKey, row); err != nil {
-						lastErr = err
-					}
+					record(DatagmaFindFromName(ctx, apiKey, row))
 					need = evaluateNeedState(ctx, cfg, opts, row, verifiedCache)
 					if !need.ShouldContinue {
 						break
 					}
 				}
 				if need.StillNeedLI {
-					if err := DatagmaEnrichPerson(ctx, apiKey, row); err != nil {
-						lastErr = err
-					}
+					record(DatagmaEnrichPerson(ctx, apiKey, row))
 					need = evaluateNeedState(ctx, cfg, opts, row, verifiedCache)
 				}
 
 			case VendorLeadIQ:
 				if need.StillNeedEmail || need.StillNeedLI {
-					if err := LeadIQFindByNameAndCompany(ctx, apiKey, row); err != nil {
-						lastErr = err
-					}
+					record(LeadIQFindByNameAndCompany(ctx, apiKey, row))
 					need = evaluateNeedState(ctx, cfg, opts, row, verifiedCache)
 				}
 			}
@@ -261,7 +225,7 @@ func EnrichContact(ctx context.Context, cfg *Config, opts RunOptions, row *Conta
 	row.Website = strings.ToLower(strings.TrimSpace(row.Website))
 
 	// 8. Finalize status & error
-	finalizeStatus(opts, need, lastErr, row)
+	finalizeStatus(opts, need, errs, row)
 	row.Error = cfg.RedactSecrets(row.Error)
 	return nil
 }
@@ -327,7 +291,7 @@ func resolveCompanyDetails(ctx context.Context, cfg *Config, row *ContactRecord)
 	}
 }
 
-func evaluateNeedState(ctx context.Context, cfg *Config, opts RunOptions, row *ContactRecord, verifiedCache map[string]bool) NeedState {
+func evaluateNeedState(ctx context.Context, cfg *Config, opts RunOptions, row *ContactRecord, verifiedCache map[string]string) NeedState {
 	populateDomain(row)
 	state := NeedState{}
 
@@ -337,32 +301,32 @@ func evaluateNeedState(ctx context.Context, cfg *Config, opts RunOptions, row *C
 			emailKey := strings.ToLower(strings.TrimSpace(row.Email))
 			zbKey := cfg.GetKey(VendorZeroBounce)
 			if opts.VerifyEmail && zbKey != "" {
-				if valid, alreadyChecked := verifiedCache[emailKey]; alreadyChecked {
-					if valid {
-						stillNeedEmail = false
-						row.EmailVerified = "true"
-					} else {
-						row.Email = ""
-						row.EmailSource = ""
-						row.EmailVerified = "false"
-					}
-				} else {
+				// Cache the verdict per address (including API errors) so each email is checked once per row.
+				verdict, alreadyChecked := verifiedCache[emailKey]
+				if !alreadyChecked {
 					valid, err := ZeroBounceValidateEmail(ctx, zbKey, row.Email)
-					if err != nil {
-						// If ZeroBounce errors transiently, keep the syntax-valid email rather than discarding
-						stillNeedEmail = false
-						row.EmailVerified = "error"
-					} else {
-						verifiedCache[emailKey] = valid
-						if valid {
-							stillNeedEmail = false
-							row.EmailVerified = "true"
-						} else {
-							row.Email = ""
-							row.EmailSource = ""
-							row.EmailVerified = "false"
-						}
+					switch {
+					case err != nil:
+						verdict = "error"
+					case valid:
+						verdict = "true"
+					default:
+						verdict = "false"
 					}
+					verifiedCache[emailKey] = verdict
+				}
+				switch verdict {
+				case "true":
+					stillNeedEmail = false
+					row.EmailVerified = "true"
+				case "error":
+					// A transient ZeroBounce failure keeps the syntax-valid email rather than discarding it.
+					stillNeedEmail = false
+					row.EmailVerified = "error"
+				default:
+					row.Email = ""
+					row.EmailSource = ""
+					row.EmailVerified = "false"
 				}
 			} else {
 				stillNeedEmail = false
@@ -404,9 +368,13 @@ func evaluateNeedState(ctx context.Context, cfg *Config, opts RunOptions, row *C
 	return state
 }
 
-func finalizeStatus(opts RunOptions, need NeedState, lastErr error, row *ContactRecord) {
-	if lastErr != nil {
-		row.Error = lastErr.Error()
+func finalizeStatus(opts RunOptions, need NeedState, errs []error, row *ContactRecord) {
+	if len(errs) > 0 {
+		msgs := make([]string, len(errs))
+		for i, err := range errs {
+			msgs[i] = err.Error()
+		}
+		row.Error = strings.Join(msgs, "; ")
 	}
 
 	if !need.ShouldContinue {
@@ -424,7 +392,7 @@ func finalizeStatus(opts RunOptions, need NeedState, lastErr error, row *Contact
 		return
 	}
 
-	if lastErr != nil {
+	if len(errs) > 0 {
 		row.Status = "error"
 	} else {
 		row.Status = "not_found"

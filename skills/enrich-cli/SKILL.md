@@ -166,6 +166,8 @@ enrich person \
 Use `enrich csv` for standard prospect lists. It preserves **100% of the original CSV columns and row ordering**, appending 16 enrichment and provenance columns at the end of each row:
 `enriched_first_name`, `enriched_last_name`, `enriched_email`, `email_source`, `email_verified`, `enriched_phone`, `phone_source`, `enriched_person_linkedin`, `person_linkedin_source`, `enriched_title`, `enriched_company_name`, `enriched_domain`, `enriched_company_linkedin`, `company_linkedin_source`, `enrich_status`, `enrich_error`.
 
+The `enrich_error` column lists only real vendor failures, such as auth, credits, non-2xx responses or timeouts. Several failures are separated by `; `. A vendor that was skipped because the row lacked the inputs it needs is not an error. A vendor that found no match is not an error either. When every vendor was skipped or found nothing, the row's `enrich_status` is `not_found`. A row can be `enriched` or `partial` and still have a non-empty `enrich_error` from a vendor that failed before another one succeeded.
+
 1. **Inspect the input file first:**
    ```bash
    head -n 5 prospects.csv

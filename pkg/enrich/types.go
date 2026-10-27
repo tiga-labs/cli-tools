@@ -4,7 +4,9 @@ import (
 	"net/http"
 	"net/mail"
 	"regexp"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-resty/resty/v2"
@@ -58,15 +60,61 @@ var AllSupportedVendors = []string{
 // ProviderTransport, when non-nil (in tests), intercepts HTTP calls made by vendor clients.
 var ProviderTransport http.RoundTripper
 
-// ProviderTimeout bounds each vendor HTTP request so a stalled connection cannot hang a worker.
-var ProviderTimeout = 60 * time.Second
+// Vendor HTTP client settings. The shared client reads these once, when it is first used;
+// clients built for a non-nil ProviderTransport (tests) read them on every call.
+var (
+	// ProviderTimeout bounds each vendor HTTP attempt so a stalled connection cannot hang a worker.
+	ProviderTimeout = 60 * time.Second
+	// ProviderRetryCount is how many times a 429/503 response is retried.
+	ProviderRetryCount = 3
+	// ProviderRetryMaxWait caps the wait between retries, including Retry-After values.
+	ProviderRetryMaxWait = 30 * time.Second
+)
 
+var (
+	sharedClientOnce sync.Once
+	sharedClient     *resty.Client
+)
+
+// newProviderClient returns the vendor HTTP client. In production a single client is shared so
+// connections are reused; when ProviderTransport is set, a fresh client is built per call.
 func newProviderClient() *resty.Client {
-	client := resty.New().SetTimeout(ProviderTimeout)
 	if ProviderTransport != nil {
-		client.SetTransport(ProviderTransport)
+		return buildProviderClient().SetTransport(ProviderTransport)
 	}
-	return client
+	sharedClientOnce.Do(func() { sharedClient = buildProviderClient() })
+	return sharedClient
+}
+
+func buildProviderClient() *resty.Client {
+	minWait := time.Second
+	if ProviderRetryMaxWait < minWait {
+		minWait = ProviderRetryMaxWait
+	}
+	return resty.New().
+		SetCookieJar(nil). // never share vendor cookies across requests
+		SetTimeout(ProviderTimeout).
+		SetRetryCount(ProviderRetryCount).
+		SetRetryWaitTime(minWait).
+		SetRetryMaxWaitTime(ProviderRetryMaxWait).
+		// A retry condition replaces resty's default retry-on-error, so transport errors are
+		// not retried and non-idempotent submits (Seamless, Dropcontact) are never sent twice.
+		AddRetryCondition(func(r *resty.Response, _ error) bool {
+			return r != nil && (r.StatusCode() == http.StatusTooManyRequests || r.StatusCode() == http.StatusServiceUnavailable)
+		}).
+		SetRetryAfter(retryAfterHeader)
+}
+
+// retryAfterHeader honors a Retry-After header given in seconds; 0 falls back to jittered backoff.
+func retryAfterHeader(_ *resty.Client, r *resty.Response) (time.Duration, error) {
+	if r == nil {
+		return 0, nil
+	}
+	secs, err := strconv.Atoi(strings.TrimSpace(r.Header().Get("Retry-After")))
+	if err != nil || secs <= 0 {
+		return 0, nil
+	}
+	return time.Duration(secs) * time.Second, nil
 }
 
 // ContactRecord holds all input, enriched, and provenance fields for a single contact.

@@ -11,16 +11,18 @@ import (
 	"golang.org/x/net/publicsuffix"
 )
 
-// HostFromWebsite extracts the hostname from a website URL or domain string, stripping leading "www.".
+// HostFromWebsite extracts the lowercase hostname (without port) from a website URL or domain
+// string, stripping a leading "www.".
 func HostFromWebsite(website string) (string, error) {
 	website = strings.TrimSpace(website)
 	if website == "" {
 		return "", nil
 	}
-	if !strings.Contains(website, "http://") && !strings.Contains(website, "https://") {
+	lower := strings.ToLower(website)
+	if !strings.HasPrefix(lower, "http://") && !strings.HasPrefix(lower, "https://") {
 		website = "http://" + website
 	}
-	if strings.Contains(website, "http:///") || strings.Contains(website, "https:///") {
+	if strings.Contains(website, ":///") {
 		website = strings.Replace(website, ":///", "://", 1)
 	}
 
@@ -29,10 +31,7 @@ func HostFromWebsite(website string) (string, error) {
 		return "", err
 	}
 
-	host := u.Host
-	host = strings.Replace(host, "www.", "", 1)
-	host = strings.TrimSpace(host)
-	return host, nil
+	return strings.TrimPrefix(strings.ToLower(u.Hostname()), "www."), nil
 }
 
 // GetDomainFromWebsite returns the registrable root domain (eTLD+1) from a website URL or hostname.

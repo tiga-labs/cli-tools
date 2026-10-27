@@ -7,17 +7,12 @@ import (
 	"fmt"
 	"github.com/tiga-labs/cli-tools/pkg/urlutil"
 	"strings"
-	"time"
 )
 
 const (
 	renidlyLiveBaseURL = "https://renidly.com/api/v2"
 	renidlyDataBaseURL = "https://renidly.com/api/data/v1"
-	renidlyMaxRetries  = 5
 )
-
-// RenidlyRetryDelay is the base delay for 429 rate-limit retries; tests can lower it.
-var RenidlyRetryDelay = 2 * time.Second
 
 // RenidlyEnvelope is the standard 5-field JSON envelope returned by all Renidly endpoints.
 type RenidlyEnvelope struct {
@@ -124,7 +119,7 @@ func RenidlyEnrichPerson(ctx context.Context, apiKey string, row *ContactRecord)
 		params["handle"] = handle
 	}
 
-	env, err := renidlyGet(ctx, apiKey, renidlyLiveBaseURL+"/person/enrich", params, 0)
+	env, err := renidlyGet(ctx, apiKey, renidlyLiveBaseURL+"/person/enrich", params)
 	if err != nil {
 		return err
 	}
@@ -146,7 +141,7 @@ func RenidlyEnrichPerson(ctx context.Context, apiKey string, row *ContactRecord)
 	positions := profile.allPositions()
 	entityID := firstNonEmpty(profile.EntityID, profile.ID, urn)
 	if len(positions) == 0 && entityID != "" && (row.CompanyName == "" || row.CompanyLinkedIn == "" || row.Title == "") {
-		if empEnv, empErr := renidlyGet(ctx, apiKey, renidlyLiveBaseURL+"/person/employment-history", map[string]string{"entityId": entityID}, 0); empErr == nil && empEnv.Success && len(empEnv.Data) > 0 {
+		if empEnv, empErr := renidlyGet(ctx, apiKey, renidlyLiveBaseURL+"/person/employment-history", map[string]string{"entityId": entityID}); empErr == nil && empEnv.Success && len(empEnv.Data) > 0 {
 			var empData RenidlyEmploymentHistoryData
 			if json.Unmarshal(empEnv.Data, &empData) == nil {
 				positions = append(positions, empData.Positions...)
@@ -174,7 +169,7 @@ func renidlyEnrichFromDataAPI(ctx context.Context, apiKey, id, handle string, ro
 		return nil
 	}
 
-	env, err := renidlyGet(ctx, apiKey, renidlyDataBaseURL+"/people/profile", params, 0)
+	env, err := renidlyGet(ctx, apiKey, renidlyDataBaseURL+"/people/profile", params)
 	if err != nil {
 		return err
 	}
@@ -289,7 +284,7 @@ func RenidlyEnrichCompany(ctx context.Context, apiKey string, row *ContactRecord
 		params = map[string]string{"id": slugOrID}
 	}
 
-	env, err := renidlyGet(ctx, apiKey, renidlyDataBaseURL+"/companies/company", params, 0)
+	env, err := renidlyGet(ctx, apiKey, renidlyDataBaseURL+"/companies/company", params)
 	if err != nil {
 		return err
 	}
@@ -299,7 +294,7 @@ func RenidlyEnrichCompany(ctx context.Context, apiKey string, row *ContactRecord
 		liveParams := map[string]string{"id": slugOrID}
 		if !isDigitsOnly(slugOrID) {
 			// Resolve slug to numeric id first
-			resEnv, resErr := renidlyGet(ctx, apiKey, renidlyLiveBaseURL+"/organization/resolve-slug", map[string]string{"slug": slugOrID}, 0)
+			resEnv, resErr := renidlyGet(ctx, apiKey, renidlyLiveBaseURL+"/organization/resolve-slug", map[string]string{"slug": slugOrID})
 			if resErr != nil || !resEnv.Success {
 				return nil
 			}
@@ -311,7 +306,7 @@ func RenidlyEnrichCompany(ctx context.Context, apiKey string, row *ContactRecord
 			}
 			liveParams["id"] = fmt.Sprintf("%v", resolved.ID)
 		}
-		env, err = renidlyGet(ctx, apiKey, renidlyLiveBaseURL+"/organization/enrich", liveParams, 0)
+		env, err = renidlyGet(ctx, apiKey, renidlyLiveBaseURL+"/organization/enrich", liveParams)
 		if err != nil || !env.Success || len(env.Data) == 0 || string(env.Data) == "null" {
 			return nil
 		}
@@ -357,18 +352,8 @@ func RenidlyEnrichCompany(ctx context.Context, apiKey string, row *ContactRecord
 	return nil
 }
 
-func renidlyGet(ctx context.Context, apiKey, endpoint string, queryParams map[string]string, attempt int) (RenidlyEnvelope, error) {
+func renidlyGet(ctx context.Context, apiKey, endpoint string, queryParams map[string]string) (RenidlyEnvelope, error) {
 	var env RenidlyEnvelope
-	if attempt > renidlyMaxRetries {
-		return env, fmt.Errorf("renidly: exceeded max retries (%d) due to rate limiting", renidlyMaxRetries)
-	}
-
-	select {
-	case <-ctx.Done():
-		return env, ctx.Err()
-	default:
-	}
-
 	resp, err := newProviderClient().R().
 		SetContext(ctx).
 		SetHeader("X-renidly-apikey", apiKey).
@@ -378,16 +363,6 @@ func renidlyGet(ctx context.Context, apiKey, endpoint string, queryParams map[st
 		Get(endpoint)
 	if err != nil {
 		return env, fmt.Errorf("renidly request failed: %w", err)
-	}
-
-	if resp.StatusCode() == 429 || resp.StatusCode() == 503 {
-		wait := RenidlyRetryDelay * time.Duration(attempt+1)
-		select {
-		case <-ctx.Done():
-			return env, ctx.Err()
-		case <-time.After(wait):
-		}
-		return renidlyGet(ctx, apiKey, endpoint, queryParams, attempt+1)
 	}
 
 	if resp.StatusCode() == 401 || resp.StatusCode() == 403 {
