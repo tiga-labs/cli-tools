@@ -3,9 +3,10 @@ package enrich
 import (
 	"context"
 	"errors"
+	"strings"
+
 	"github.com/tiga-labs/cli-tools/pkg/freeemail"
 	"github.com/tiga-labs/cli-tools/pkg/urlutil"
-	"strings"
 )
 
 // EnrichContact executes the full enrichment lifecycle (pre-processors, waterfall, post-processors)

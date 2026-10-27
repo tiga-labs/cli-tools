@@ -5,8 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/tiga-labs/cli-tools/pkg/urlutil"
 	"strings"
+
+	"github.com/tiga-labs/cli-tools/pkg/urlutil"
 )
 
 const (

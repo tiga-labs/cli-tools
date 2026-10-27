@@ -1,13 +1,13 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/csv"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
-	"github.com/tiga-labs/cli-tools/pkg/enrich"
 	"io"
 	"os"
 	"os/signal"
@@ -15,6 +15,8 @@ import (
 	"strings"
 	"syscall"
 	"text/tabwriter"
+
+	"github.com/tiga-labs/cli-tools/pkg/enrich"
 )
 
 var version = "dev"
@@ -43,7 +45,7 @@ func runCLI(ctx context.Context, args []string, stdin io.Reader, stdout, stderr 
 		fmt.Fprintf(stdout, "enrich %s\n", version)
 		return nil
 	case "keys", "key":
-		return runKeysCommand(args[1:], stdout, stderr)
+		return runKeysCommand(args[1:], stdin, stdout, stderr)
 	case "person", "contact":
 		return runPersonCommand(ctx, args[1:], stdout, stderr)
 	case "csv":
@@ -80,7 +82,7 @@ Run "enrich <command> --help" for more information on a command.`)
 // Subcommand: enrich keys
 // ============================================================================
 
-func runKeysCommand(args []string, stdout, stderr io.Writer) error {
+func runKeysCommand(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("enrich keys", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	configPath := fs.String("config", "", "Path to config file (default: ~/.config/enrich/config.json)")
@@ -90,6 +92,7 @@ func runKeysCommand(args []string, stdout, stderr io.Writer) error {
 		fmt.Fprintln(stderr, `Usage:
   enrich keys list [--json] [--config <path>]
   enrich keys set <vendor> <api-key> [--config <path>]
+  enrich keys set <vendor> - [--config <path>]   (read the key from stdin; keeps it out of shell history)
   enrich keys rm <vendor> [--config <path>]
 
 Vendors:
@@ -142,10 +145,15 @@ Vendors:
 	case "set", "add":
 		if len(posArgs) < 3 {
 			fs.Usage()
-			return errors.New("usage: enrich keys set <vendor> <api-key>")
+			return errors.New("usage: enrich keys set <vendor> <api-key|->")
 		}
 		vendor := posArgs[1]
 		key := posArgs[2]
+		if key == "-" {
+			if key, err = readKeyFromStdin(stdin); err != nil {
+				return err
+			}
+		}
 		if err := cfg.SetKey(vendor, key); err != nil {
 			return err
 		}
@@ -560,6 +568,19 @@ func isSameFile(a, b string) (bool, error) {
 		return false, nil
 	}
 	return os.SameFile(infoA, infoB), nil
+}
+
+// readKeyFromStdin reads an API key from the first line of r, e.g. `pbpaste | enrich keys set x -`.
+func readKeyFromStdin(r io.Reader) (string, error) {
+	line, err := bufio.NewReader(r).ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return "", fmt.Errorf("failed to read API key from stdin: %w", err)
+	}
+	key := strings.TrimSpace(line)
+	if key == "" {
+		return "", errors.New("no API key received on stdin")
+	}
+	return key, nil
 }
 
 func validateFeatureKeys(cfg *enrich.Config, opts enrich.RunOptions) error {

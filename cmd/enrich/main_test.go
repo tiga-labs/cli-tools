@@ -4,13 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"github.com/tiga-labs/cli-tools/pkg/enrich"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/tiga-labs/cli-tools/pkg/enrich"
 )
 
 type roundTripFunc func(req *http.Request) (*http.Response, error)
@@ -40,7 +41,7 @@ func TestCLIKeysAndPersonAndCSV(t *testing.T) {
 	if err != nil {
 		t.Fatalf("keys list failed: %v", err)
 	}
-	if !strings.Contains(stdout.String(), "findymail") || !strings.Contains(stdout.String(), "fm-s...3456") {
+	if !strings.Contains(stdout.String(), "findymail") || !strings.Contains(stdout.String(), "...3456") || strings.Contains(stdout.String(), "fm-s") {
 		t.Fatalf("unexpected keys list output:\n%s", stdout.String())
 	}
 
@@ -169,5 +170,31 @@ func TestCSVWritesOutputFile(t *testing.T) {
 	}
 	if info, _ := os.Stat(outPath); info.Mode().Perm() != 0644 {
 		t.Fatalf("expected output mode 0644, got %v", info.Mode().Perm())
+	}
+}
+
+func TestKeysSetReadsKeyFromStdin(t *testing.T) {
+	cfgPath := filepath.Join(t.TempDir(), "config.json")
+	var stdout, stderr bytes.Buffer
+	err := runCLI(context.Background(), []string{"keys", "set", "hunter", "-", "--config", cfgPath},
+		strings.NewReader("  hu-stdin-secret-0042\n"), &stdout, &stderr)
+	if err != nil {
+		t.Fatalf("keys set from stdin failed: %v (stderr: %s)", err, stderr.String())
+	}
+	cfg, err := enrich.LoadConfig(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.Keys[enrich.VendorHunter]; got != "hu-stdin-secret-0042" {
+		t.Fatalf("expected key read from stdin, got %q", got)
+	}
+	if strings.Contains(stdout.String(), "hu-stdin-secret-0042") {
+		t.Fatalf("output must not echo the key: %s", stdout.String())
+	}
+
+	err = runCLI(context.Background(), []string{"keys", "set", "hunter", "-", "--config", cfgPath},
+		strings.NewReader("\n"), &stdout, &stderr)
+	if err == nil || !strings.Contains(err.Error(), "no API key received") {
+		t.Fatalf("expected error for empty stdin, got %v", err)
 	}
 }

@@ -123,7 +123,39 @@ func SaveConfig(path string, cfg *Config) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0600)
+
+	// Write the real file behind a symlinked config (e.g. dotfiles) rather than replacing the link.
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		path = resolved
+	}
+	return writeFileAtomic(path, data, 0600)
+}
+
+// writeFileAtomic writes data to a temp file in path's directory, enforces perm, and renames it
+// over path, so a crash never leaves a truncated file and an existing file's mode is corrected.
+func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name()) // no-op after a successful rename
+
+	if err := tmp.Chmod(perm); err != nil {
+		tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), path)
 }
 
 // SetKey sets a vendor API key in the config and saves it.
@@ -225,16 +257,20 @@ func (c *Config) ListKeyStatuses() []KeyStatus {
 	return statuses
 }
 
-// MaskKey masks an API key for display (e.g., "abcd...wxyz").
+// MaskKey masks an API key for display. Short keys reveal less so that the masked form never
+// exposes most of the key: <12 chars → "****", <24 → "...wxyz", otherwise "abcd...wxyz".
 func MaskKey(k string) string {
 	k = strings.TrimSpace(k)
-	if k == "" {
+	switch {
+	case k == "":
 		return ""
-	}
-	if len(k) <= 8 {
+	case len(k) < 12:
 		return "****"
+	case len(k) < 24:
+		return "..." + k[len(k)-4:]
+	default:
+		return k[:4] + "..." + k[len(k)-4:]
 	}
-	return k[:4] + "..." + k[len(k)-4:]
 }
 
 // ResolveActiveWaterfallVendors returns the ordered list of waterfall vendors to run,

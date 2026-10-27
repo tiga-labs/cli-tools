@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/tiga-labs/cli-tools/pkg/urlutil"
 	"strings"
 	"time"
+	"unicode/utf8"
+
+	"github.com/tiga-labs/cli-tools/pkg/urlutil"
 )
 
 const ApolloPlaceholderEmail = "email_not_unlocked@domain.com"
@@ -17,6 +19,17 @@ var (
 	DropcontactPollDelay = 4 * time.Second
 	SeamlessPollDelay    = 5 * time.Second
 )
+
+// vendorCompanyNameMax is the longest company name sent to vendors that reject long values.
+const vendorCompanyNameMax = 75
+
+// truncateRunes shortens s to at most n characters without splitting a multi-byte UTF-8 rune.
+func truncateRunes(s string, n int) string {
+	if utf8.RuneCountInString(s) <= n {
+		return s
+	}
+	return string([]rune(s)[:n])
+}
 
 func hostFromContact(row *ContactRecord) string {
 	if row == nil {
@@ -135,9 +148,9 @@ func FindymailFindFromLinkedIn(ctx context.Context, apiKey string, row *ContactR
 		return skipf("no linkedin url for FindymailFindFromLinkedIn")
 	}
 
-	lidId := row.PersonLinkedIn
-	if split := strings.Split(row.PersonLinkedIn, "/in/"); len(split) >= 2 {
-		lidId = split[1]
+	lidId := urlutil.LinkedinUrlToLinkedinId(row.PersonLinkedIn)
+	if lidId == "" {
+		lidId = row.PersonLinkedIn
 	}
 
 	var res FindymailResponse
@@ -251,10 +264,7 @@ type prospeoResponse struct {
 }
 
 func buildProspeoReqData(row *ContactRecord) prospeoEnrichRequestData {
-	companyName := strings.TrimSpace(row.CompanyName)
-	if len(companyName) > 75 {
-		companyName = companyName[:74]
-	}
+	companyName := truncateRunes(strings.TrimSpace(row.CompanyName), vendorCompanyNameMax)
 	return prospeoEnrichRequestData{
 		FirstName:          row.FirstName,
 		LastName:           row.LastName,
@@ -417,7 +427,7 @@ func ApolloEnrichPerson(ctx context.Context, apiKey string, row *ContactRecord) 
 		SetResult(&ret)
 
 	if row.Email != "" {
-		req = req.SetQueryParam("hashed_email", urlutil.BytesToSHA256([]byte(row.Email)))
+		req = req.SetQueryParam("hashed_email", urlutil.BytesToSHA256([]byte(strings.ToLower(strings.TrimSpace(row.Email)))))
 	}
 	if domain != "" {
 		req = req.SetQueryParam("domain", domain)
@@ -748,10 +758,8 @@ func SeamlessResearchContact(ctx context.Context, apiKey string, row *ContactRec
 	host := hostFromContact(row)
 	if host != "" {
 		input.Domain = host
-	} else if len(row.CompanyName) > 75 {
-		input.CompanyName = row.CompanyName[:74]
 	} else {
-		input.CompanyName = row.CompanyName
+		input.CompanyName = truncateRunes(row.CompanyName, vendorCompanyNameMax)
 	}
 
 	if input.LiProfileUrl == "" && (input.ContactName == "" || (input.Domain == "" && input.CompanyName == "")) {
@@ -906,10 +914,7 @@ func DropcontactFindFromName(ctx context.Context, apiKey string, row *ContactRec
 	host := hostFromContact(row)
 	company := host
 	if company == "" {
-		company = row.CompanyName
-		if len(company) > 75 {
-			company = company[:74]
-		}
+		company = truncateRunes(row.CompanyName, vendorCompanyNameMax)
 	}
 	if company == "" && row.FirstName == "" && row.LastName == "" {
 		return skipf("insufficient identifiers for DropcontactFindFromName")

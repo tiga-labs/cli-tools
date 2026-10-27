@@ -51,12 +51,30 @@ make build
 # Build enrich specifically for x86_64 macOS into bin/enrich-darwin-amd64
 make build-enrich-mac-x86
 
-# Cross-compile all tools under cmd/* for darwin/{amd64,arm64} and linux/{amd64,arm64} into dist/
-make build-release
+# Dry-run the release locally with GoReleaser (cross-compiles into dist/, publishes nothing)
+make release-snapshot
 
 # Run all unit and integration tests
 make test
 ```
+
+### Releasing
+Releases are published to [GitHub Releases](https://github.com/tiga-labs/cli-tools/releases) by GoReleaser. To cut a release, push a version tag:
+
+```bash
+git tag v0.2.0 && git push origin v0.2.0
+```
+
+The `release` GitHub Actions workflow then builds `darwin`/`linux` × `amd64`/`arm64` binaries and uploads them. Each binary is uploaded as `enrich-<os>-<arch>`, together with `checksums.txt` and `install.sh`.
+
+### Installing
+```bash
+curl -fsSL https://github.com/tiga-labs/cli-tools/releases/latest/download/install.sh | sh
+# pin a version / change the install directory:
+curl -fsSL https://github.com/tiga-labs/cli-tools/releases/latest/download/install.sh | VERSION=v0.2.0 INSTALL_DIR="$HOME/.local/bin" sh
+```
+
+The installer checks the binary's SHA-256 against `checksums.txt` before installing it.
 
 ### End-to-End Tests (live vendors)
 These tests call the real vendor APIs and **spend credits**. They never run with `make test`. You must use the `e2e` build tag and set `ENRICH_E2E=1`.
@@ -86,5 +104,5 @@ go test -tags e2e -run 'E2EWaterfallVendor/hunter' -count=1 -v ./pkg/enrich/
 
 ### Adding a New Tool
 1. Create `cmd/<tool-name>/main.go` (and optional library code under `pkg/<tool-name>/`).
-2. `make build` and `make build-release` will automatically discover `cmd/<tool-name>` and build binaries for all target platforms.
-3. Add a matching entry in `.goreleaser.yaml` if releasing via GoReleaser.
+2. `make build` will automatically discover `cmd/<tool-name>` and build it for your machine.
+3. Add a matching `builds` entry in `.goreleaser.yaml` so the tool is included in releases.

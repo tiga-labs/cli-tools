@@ -145,6 +145,8 @@ type ContactRecord struct {
 	Error                 string `json:"error,omitempty"`
 }
 
+var urnParenRe = regexp.MustCompile(`\(([^()]*)\)`)
+
 // ExtractRapidURN extracts the raw URN or profile token from Sales Navigator or fsd_profile URNs,
 // or returns LinkedInURN trimmed if it is already a raw token/entityId.
 func (c *ContactRecord) ExtractRapidURN() string {
@@ -153,8 +155,7 @@ func (c *ContactRecord) ExtractRapidURN() string {
 		return ""
 	}
 	if strings.Contains(raw, "urn:li:fs_salesProfile:") || strings.Contains(raw, "urn:li:fsd_profile:") {
-		re := regexp.MustCompile(`\(([^()]*)\)`)
-		matches := re.FindAllStringSubmatch(raw, -1)
+		matches := urnParenRe.FindAllStringSubmatch(raw, -1)
 		if len(matches) > 0 && len(matches[0]) > 0 {
 			split := strings.Split(matches[0][0], ",")
 			if len(split) > 0 {

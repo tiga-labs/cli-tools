@@ -5,16 +5,20 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/tiga-labs/cli-tools/pkg/urlutil"
+	"io"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/tidwall/gjson"
+	"github.com/tiga-labs/cli-tools/pkg/urlutil"
 )
 
 const openAIChatEndpoint = "https://api.openai.com/v1/chat/completions"
+
+// maxScrapeBytes caps how much of a company homepage is read when scraping for a LinkedIn link.
+const maxScrapeBytes = 2 << 20
 
 type openAIChatRequest struct {
 	Model          string                `json:"model"`
@@ -220,7 +224,9 @@ func ScrapeCompanyLinkedInFromWebsite(ctx context.Context, websiteOrDomain strin
 		return "", nil
 	}
 
-	doc, err := goquery.NewDocumentFromReader(res.Body)
+	// Cap the body so a huge or hostile page cannot exhaust memory; LinkedIn links sit in the
+	// header/footer of normal homepages, well within this limit.
+	doc, err := goquery.NewDocumentFromReader(io.LimitReader(res.Body, maxScrapeBytes))
 	if err != nil {
 		return "", err
 	}

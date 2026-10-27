@@ -4,7 +4,6 @@ project_name: cli-tools
 
 before:
   hooks:
-    - go mod tidy
     - go test ./...
 
 builds:
@@ -33,17 +32,22 @@ builds:
   #   ldflags:
   #     - -s -w -X main.version={{.Version}}
 
+# Publish raw binaries (no tar/zip) with unversioned names, so install.sh can always fetch
+# https://github.com/tiga-labs/cli-tools/releases/latest/download/<tool>-<os>-<arch>
 archives:
-  - id: default
-    ids:
-      - enrich
-    name_template: "{{ .Binary }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
-    format_overrides:
-      - goos: darwin
-        formats: ["zip", "tar.gz"]
+  - id: binaries
+    formats: ["binary"]
+    name_template: "{{ .Binary }}-{{ .Os }}-{{ .Arch }}"
 
 checksum:
   name_template: "checksums.txt"
+
+release:
+  github:
+    owner: tiga-labs
+    name: cli-tools
+  extra_files:
+    - glob: ./install.sh
 
 changelog:
   sort: asc

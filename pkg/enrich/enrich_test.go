@@ -3,16 +3,20 @@ package enrich_test
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/csv"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"github.com/tiga-labs/cli-tools/pkg/enrich"
 	"io"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/tiga-labs/cli-tools/pkg/enrich"
 )
 
 type roundTripFunc func(req *http.Request) (*http.Response, error)
@@ -818,5 +822,112 @@ func TestTransportErrorIsNotRetried(t *testing.T) {
 	}
 	if calls != 1 {
 		t.Fatalf("transport errors must not be retried (non-idempotent submit), got %d calls", calls)
+	}
+}
+
+func TestMaskKeyHidesMostOfShortKeys(t *testing.T) {
+	tests := []struct{ in, want string }{
+		{"", ""},
+		{"short", "****"},
+		{"elevenchars", "****"},
+		{"hu-secret-123456", "...3456"},
+		{"sk-live-0123456789abcdefWXYZ", "sk-l...WXYZ"},
+	}
+	for _, tt := range tests {
+		if got := enrich.MaskKey(tt.in); got != tt.want {
+			t.Errorf("MaskKey(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
+func TestSaveConfigIsAtomicAndEnforcesMode(t *testing.T) {
+	dir := t.TempDir()
+	realPath := filepath.Join(dir, "real.json")
+	if err := os.WriteFile(realPath, []byte(`{"keys":{}}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	linkPath := filepath.Join(dir, "config.json")
+	if err := os.Symlink(realPath, linkPath); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := &enrich.Config{Keys: map[string]string{enrich.VendorHunter: "hu-key-123"}}
+	if err := enrich.SaveConfig(linkPath, cfg); err != nil {
+		t.Fatalf("SaveConfig failed: %v", err)
+	}
+
+	if info, err := os.Lstat(linkPath); err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("symlinked config was replaced by a regular file (err=%v)", err)
+	}
+	info, err := os.Stat(realPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0600 {
+		t.Fatalf("expected existing 0644 config to be saved as 0600, got %v", info.Mode().Perm())
+	}
+	reloaded, err := enrich.LoadConfig(linkPath)
+	if err != nil || reloaded.Keys[enrich.VendorHunter] != "hu-key-123" {
+		t.Fatalf("reload failed: %v %+v", err, reloaded)
+	}
+	if leftovers, _ := filepath.Glob(filepath.Join(dir, ".*.tmp-*")); len(leftovers) > 0 {
+		t.Fatalf("temp files left behind: %v", leftovers)
+	}
+}
+
+func TestApolloHashesNormalizedEmail(t *testing.T) {
+	var got string
+	enrich.ProviderTransport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		got = req.URL.Query().Get("hashed_email")
+		return jsonHTTPResponse(200, map[string]any{"person": map[string]any{}}), nil
+	})
+	defer func() { enrich.ProviderTransport = nil }()
+
+	row := enrich.ContactRecord{Email: "Jane.Doe@Acme.com"}
+	if err := enrich.ApolloEnrichPerson(context.Background(), "ap-key", &row); err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256([]byte("jane.doe@acme.com"))
+	if want := hex.EncodeToString(sum[:]); got != want {
+		t.Fatalf("hashed_email = %q, want sha256 of lowercased email %q", got, want)
+	}
+}
+
+func TestFindymailSendsBareLinkedInHandle(t *testing.T) {
+	var sent string
+	enrich.ProviderTransport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		var body map[string]string
+		_ = json.NewDecoder(req.Body).Decode(&body)
+		sent = body["linkedin_url"]
+		return jsonHTTPResponse(200, map[string]any{"contact": map[string]any{}}), nil
+	})
+	defer func() { enrich.ProviderTransport = nil }()
+
+	row := enrich.ContactRecord{PersonLinkedIn: "https://www.linkedin.com/in/JaneDoe/?trk=abc"}
+	if err := enrich.FindymailFindFromLinkedIn(context.Background(), "fm-key", &row); err != nil {
+		t.Fatal(err)
+	}
+	if sent != "janedoe" {
+		t.Fatalf("expected bare handle %q, got %q", "janedoe", sent)
+	}
+}
+
+func TestScrapeStopsReadingHugePages(t *testing.T) {
+	const link = `<a href="https://www.linkedin.com/company/acme">LinkedIn</a>`
+	var page string
+	enrich.ProviderTransport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(page))}, nil
+	})
+	defer func() { enrich.ProviderTransport = nil }()
+
+	page = "<html><body>" + link + "</body></html>"
+	if got, err := enrich.ScrapeCompanyLinkedInFromWebsite(context.Background(), "acme.com"); err != nil || got != "https://www.linkedin.com/company/acme" {
+		t.Fatalf("expected link from small page, got %q, %v", got, err)
+	}
+
+	// A link beyond the read cap is never seen, proving the body is not read in full.
+	page = "<html><body>" + strings.Repeat("x", 3<<20) + link + "</body></html>"
+	if got, err := enrich.ScrapeCompanyLinkedInFromWebsite(context.Background(), "acme.com"); err != nil || got != "" {
+		t.Fatalf("expected no link past the read cap, got %q, %v", got, err)
 	}
 }

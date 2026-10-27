@@ -4,9 +4,8 @@
 TOOLS := $(notdir $(wildcard cmd/*))
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 LDFLAGS := -s -w -X main.version=$(VERSION)
-PLATFORMS := darwin/amd64 darwin/arm64 linux/amd64 linux/arm64
 
-.PHONY: all build test test-e2e clean build-release $(addprefix build-,$(TOOLS)) $(addprefix build-mac-x86-,$(TOOLS))
+.PHONY: all build test test-e2e clean release-snapshot $(addprefix build-,$(TOOLS)) $(addprefix build-mac-x86-,$(TOOLS))
 
 all: build
 
@@ -26,19 +25,10 @@ $(addprefix build-mac-x86-,$(TOOLS)): build-mac-x86-%:
 .PHONY: build-enrich-mac-x86
 build-enrich-mac-x86: build-mac-x86-enrich
 
-# Cross-compile all tools in cmd/* across darwin/amd64, darwin/arm64, linux/amd64, linux/arm64 into dist/
-build-release:
-	@mkdir -p dist
-	@for tool in $(TOOLS); do \
-		for platform in $(PLATFORMS); do \
-			os=$${platform%/*}; \
-			arch=$${platform#*/}; \
-			out="dist/$${tool}-$${os}-$${arch}"; \
-			echo "Building $${out} (version=$(VERSION))..."; \
-			GOOS=$${os} GOARCH=$${arch} CGO_ENABLED=0 go build -ldflags="$(LDFLAGS)" -o "$${out}" "./cmd/$${tool}" || exit 1; \
-		done; \
-	done
-	@cd dist && shasum -a 256 * > checksums.txt
+# Local dry run of the GoReleaser release (cross-compiles into dist/, publishes nothing).
+# Real releases are published to GitHub Releases by CI when a v* tag is pushed.
+release-snapshot:
+	goreleaser release --snapshot --clean
 
 test:
 	go test -race -cover ./...
