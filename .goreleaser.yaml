@@ -1,15 +1,15 @@
 version: 2
 
-project_name: cli-tools
+project_name: tiga
 
 before:
   hooks:
     - go test ./...
 
 builds:
-  - id: enrich
-    main: ./cmd/enrich
-    binary: enrich
+  - id: tiga
+    main: ./cmd/tiga
+    binary: tiga
     env:
       - CGO_ENABLED=0
     goos:
@@ -20,25 +20,9 @@ builds:
       - arm64
     ldflags:
       - -s -w -X main.version={{.Version}}
-
-  - id: signals
-    main: ./cmd/signals
-    binary: signals
-    env:
-      - CGO_ENABLED=0
-    goos:
-      - darwin
-      - linux
-    goarch:
-      - amd64
-      - arm64
-    ldflags:
-      - -s -w -X main.version={{.Version}}
-
-  # Add future CLI tools under cmd/<tool> here, with the same settings.
 
 # Publish raw binaries (no tar/zip) with unversioned names, so install.sh can always fetch
-# https://github.com/tiga-labs/cli-tools/releases/latest/download/<tool>-<os>-<arch>
+# https://github.com/tiga-labs/cli-tools/releases/latest/download/tiga-<os>-<arch>
 archives:
   - id: binaries
     formats: ["binary"]

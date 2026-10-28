@@ -1,5 +1,5 @@
-# Multi-tool CLI monorepo Makefile
-# Automatically discovers every CLI tool under cmd/*
+# tiga CLI Makefile
+# Builds every binary under cmd/* (today just cmd/tiga)
 
 TOOLS := $(notdir $(wildcard cmd/*))
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
@@ -16,14 +16,10 @@ $(addprefix build-,$(TOOLS)): build-%:
 	@mkdir -p bin
 	CGO_ENABLED=0 go build -ldflags="$(LDFLAGS)" -o bin/$* ./cmd/$*
 
-# Build any tool for x86_64 macOS: e.g. `make build-mac-x86-enrich`
+# Build any binary for x86_64 macOS: e.g. `make build-mac-x86-tiga`
 $(addprefix build-mac-x86-,$(TOOLS)): build-mac-x86-%:
 	@mkdir -p bin
 	GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go build -ldflags="$(LDFLAGS)" -o bin/$*-darwin-amd64 ./cmd/$*
-
-# Convenience alias for enrich x86 mac build
-.PHONY: build-enrich-mac-x86
-build-enrich-mac-x86: build-mac-x86-enrich
 
 # Local dry run of the GoReleaser release (cross-compiles into dist/, publishes nothing).
 # Real releases are published to GitHub Releases by CI when a v* tag is pushed.
@@ -39,12 +35,12 @@ test-e2e:
 	@set -a; [ -f .env.e2e ] && . ./.env.e2e; set +a; \
 	ENRICH_E2E=1 go test -tags e2e -run 'E2E' -count=1 -v -timeout 30m ./pkg/enrich/
 
-# Live end-to-end tests for the signals CLI (sources .env.e2e if present). OpenAI: about 6 requests
+# Live end-to-end tests for `tiga signals` (sources .env.e2e if present). OpenAI: about 6 requests
 # plus up to 25 classifier and 25 research-model calls. linkdapi (only with LINKDAPI_API_KEY or
 # LINKDAPI_KEY): about 7 credits; without a linkdapi key those tests skip.
 test-e2e-signals:
 	@set -a; [ -f .env.e2e ] && . ./.env.e2e; set +a; \
-	SIGNALS_E2E=1 go test -tags e2e -run 'E2E' -count=1 -v -timeout 15m ./cmd/signals/
+	SIGNALS_E2E=1 go test -tags e2e -run 'E2E' -count=1 -v -timeout 15m ./internal/signalscmd/
 
 clean:
 	rm -rf bin/ dist/

@@ -1,19 +1,19 @@
 ---
 name: signals-cli
-description: "Run AI research signals from the command line with the `signals` CLI, on one contact or account or on a CSV of them, using the user's own OpenAI key (and optionally a linkdapi key for LinkedIn data). Use it to answer questions like 'which of these accounts raised funding recently?', 'is this company hiring AEs?', 'did this person start a new role?', 'has this company hired a new CFO?', or 'what is this person posting about on LinkedIn?'. Also use it to filter a list down to accounts where a signal hit, to score or tier a list by stacking several signals, and to manage signals API keys (`signals keys`). Trigger for requests such as 'run a signal on this CSV', 'score these accounts', 'check if these companies are hiring', 'research this account with signals', or 'set up signals keys'. This is the local CLI; it does not use the Tiga API or a Tiga account."
+description: "Run AI research signals from the command line with the `tiga signals` command, on one contact or account or on a CSV of them, using the user's own OpenAI key (and optionally a linkdapi key for LinkedIn data). Use it to answer questions like 'which of these accounts raised funding recently?', 'is this company hiring AEs?', 'did this person start a new role?', 'has this company hired a new CFO?', or 'what is this person posting about on LinkedIn?'. Also use it to filter a list down to accounts where a signal hit, to score or tier a list by stacking several signals, and to manage signals API keys (`tiga keys`). Trigger for requests such as 'run a signal on this CSV', 'score these accounts', 'check if these companies are hiring', 'research this account with signals', or 'set up signals keys'. This is the local CLI; it does not use the Tiga API or a Tiga account."
 ---
 
 # Signals CLI Skill
 
-`signals` is a standalone command-line tool that runs AI signals on contacts and accounts. A signal is a question about a record, such as "Has {{.AccountName}} raised funding in the last 90 days?". The answer comes back with a status and its sources. `signals` runs on the user's own vendor keys and keeps everything on the user's machine.
+`tiga signals` is a standalone command that runs AI signals on contacts and accounts. A signal is a question about a record, such as "Has {{.AccountName}} raised funding in the last 90 days?". The answer comes back with a status and its sources. `signals` runs on the user's own vendor keys and keeps everything on the user's machine.
 
-**CLI basics.** The commands are:
-- `signals run` for one record
-- `signals csv` for a CSV of records
-- `signals keys` to manage vendor keys
-- `signals cache clear` to remove stored results
+**CLI basics.** The tool is installed as the `tiga` binary. The commands are:
+- `tiga signals run` for one record
+- `tiga signals csv` for a CSV of records
+- `tiga keys` to manage vendor keys
+- `tiga signals cache clear` to remove stored results
 
-Keys live in `~/.config/tiga/config.json`, and environment variables override that file. Never print, echo or log a raw API key. Use `signals keys list`, which masks them.
+Keys live in `~/.config/tiga/config.json`, and environment variables override that file. Never print, echo or log a raw API key. Use `tiga keys list`, which masks them.
 
 **Related skills:**
 - **enrich-cli** fills in missing emails, LinkedIn URLs and company domains before a signals run.
@@ -23,17 +23,17 @@ Keys live in `~/.config/tiga/config.json`, and environment variables override th
 
 ## Operating principles
 
-1. **Check keys first.** Run `signals keys list` before anything else.
+1. **Check keys first.** Run `tiga keys list` before anything else.
    - Every type uses OpenAI, except `started_new_role` without advisor exclusion and `hiring_for_role`.
    - The LinkedIn types need a linkdapi key.
 
-   Never assume a key exists. If a needed key is missing, ask the user to run `signals keys set openai -` (or `linkdapi`) in their own terminal. Never ask them to paste a key into the chat, and never read keys from files or the environment yourself.
+   Never assume a key exists. If a needed key is missing, ask the user to run `tiga keys set openai -` (or `linkdapi`) in their own terminal. Never ask them to paste a key into the chat, and never read keys from files or the environment yourself.
 2. **Inspect the CSV before running.** Run `head -n 5 input.csv`.
-   - `signals csv` maps common header names to the standard fields, ignoring case, spaces, `-` and `_`. Examples:
+   - `tiga signals csv` maps common header names to the standard fields, ignoring case, spaces, `-` and `_`. Examples:
      - **Account:** `Company` / `Company Name` / `Account` → `AccountName`; `Website` → `AccountWebsite`; `Domain` → `AccountDomain`; `Company LinkedIn` / `LinkedIn Company Page` → `AccountLinkedInUrl`; `Industry` → `AccountIndustry`
      - **Person:** `First Name`, `Last Name`, `Email`, `Title`; `LinkedIn` / `Profile URL` / `Person LinkedIn` → `LinkedInUrl`
 
-     `signals csv --help` lists all fields. If unsure, check `rows_missing_deps` in the dry-run. An extra `--col` is harmless.
+     `tiga signals csv --help` lists all fields. If unsure, check `rows_missing_deps` in the dry-run. An extra `--col` is harmless.
    - Every column is also available as `{{.column_name}}` (lowercased, with spaces as `_`).
    - Use `--col Field=Header` for an unusual header, such as `--col AccountName="Company Legal Name"`.
    - **A bare `linkedin` column maps to the person's `LinkedInUrl`.** In an accounts CSV, pass `--col AccountLinkedInUrl=linkedin`, or the account LinkedIn types report every row as missing. Check `rows_missing_deps` in the dry-run.
@@ -49,7 +49,7 @@ Keys live in `~/.config/tiga/config.json`, and environment variables override th
    3. Wait for the user's explicit approval.
    4. Rows that miss a needed field (for example an account with no company LinkedIn URL) are status 3 and cost nothing. Say which rows they are, and ask whether to fill them first (with **enrich-cli**) or skip them.
 
-   A single `signals run` on one record is cheap. Still say which paid flags are on.
+   A single `tiga signals run` on one record is cheap. Still say which paid flags are on.
 4. **LinkedIn data is opt-in.** `--buy-linkedin` spends linkdapi credits (about 1 per profile, post page or company lookup, and 2 per job search).
    - Use it on a real run only after the user agrees to that spend. Without it, LinkedIn types stop at startup with an error. That is expected; don't work around it.
    - **On a `--dry-run`, `--buy-linkedin` is free and required** for LinkedIn types to be planned, so include it there without asking.
@@ -64,7 +64,7 @@ Keys live in `~/.config/tiga/config.json`, and environment variables override th
 8. **Reruns are free.** Found and not-found results are stored on disk, so a rerun of an unchanged signal on an unchanged row makes no vendor calls. Editing a signal's prompt re-runs that signal, plus any later signal that uses its answer (`{{.<key>}}`).
    - Use `--no-cache` only when the user wants fresh answers.
    - Use `--refresh-linkedin` only when they want fresh LinkedIn data (it pays linkdapi again).
-   - Run `signals cache clear` only when the user asks. With `--linkedin`, the next run pays linkdapi again for every profile and company.
+   - Run `tiga signals cache clear` only when the user asks. With `--linkedin`, the next run pays linkdapi again for every profile and company.
 
 ---
 
@@ -95,20 +95,20 @@ Keys live in `~/.config/tiga/config.json`, and environment variables override th
 ## Workflow 1: Manage keys
 
 ```bash
-signals keys list                 # what is configured (masked)
-signals keys set openai -         # paste the key on stdin; keeps it out of shell history
-signals keys set linkdapi -       # only for LinkedIn signal types
-signals keys rm linkdapi
+tiga keys list                 # what is configured (masked)
+tiga keys set openai -         # paste the key on stdin; keeps it out of shell history
+tiga keys set linkdapi -       # only for LinkedIn signal types
+tiga keys rm linkdapi
 ```
 
-`OPENAI_API_KEY` and `LINKDAPI_API_KEY` (or `LINKDAPI_KEY`) override the file. `signals` and `enrich` share the same key file.
+`OPENAI_API_KEY` and `LINKDAPI_API_KEY` (or `LINKDAPI_KEY`) override the file. `tiga signals` and `tiga enrich` share the same key file, managed by `tiga keys`.
 
 ---
 
-## Workflow 2: Research one record (`signals run`)
+## Workflow 2: Research one record (`tiga signals run`)
 
 ```bash
-signals run --account-name Stripe --account-domain stripe.com \
+tiga signals run --account-name Stripe --account-domain stripe.com \
   --prompt "Has {{.AccountName}} raised funding {{.Last90Days}}?"
 ```
 
@@ -122,20 +122,20 @@ Output is JSON: `{"results": [{"key", "label", "type", "value", "status", "statu
 Several signals in one run (files first, then the inline one):
 
 ```bash
-signals run -s funding.json -s hiring.json --account-name Acme --account-domain acme.com \
+tiga signals run -s funding.json -s hiring.json --account-name Acme --account-domain acme.com \
   --account-linkedin https://www.linkedin.com/company/acme --buy-linkedin
 ```
 
 A person LinkedIn check:
 
 ```bash
-signals run --type started_new_role --started-within THREE_MONTHS \
+tiga signals run --type started_new_role --started-within THREE_MONTHS \
   --first-name Jane --last-name Doe --linkedin-url https://www.linkedin.com/in/jane-doe --buy-linkedin
 ```
 
 ---
 
-## Workflow 3: Filter a list (`signals csv`)
+## Workflow 3: Filter a list (`tiga signals csv`)
 
 **Use when:** the user wants only the accounts or people where one signal hit.
 
@@ -143,14 +143,14 @@ signals run --type started_new_role --started-within THREE_MONTHS \
 2. Dry-run, and show the user the numbers:
 
 ```bash
-signals csv accounts.csv --prompt "Is {{.AccountName}} ({{.AccountWebsite}}) hiring salespeople {{.Last30Days}}?" \
+tiga signals csv accounts.csv --prompt "Is {{.AccountName}} ({{.AccountWebsite}}) hiring salespeople {{.Last30Days}}?" \
   --label "Hiring sales" --dry-run
 ```
 
 3. After approval, run it:
 
 ```bash
-signals csv accounts.csv --prompt "Is {{.AccountName}} ({{.AccountWebsite}}) hiring salespeople {{.Last30Days}}?" \
+tiga signals csv accounts.csv --prompt "Is {{.AccountName}} ({{.AccountWebsite}}) hiring salespeople {{.Last30Days}}?" \
   --label "Hiring sales" -o scored.csv
 ```
 
@@ -172,7 +172,7 @@ Progress lines go to stderr (`[3/50] row 3: hiring_sales=success`). `--quiet` tu
 2. Dry-run them all at once, and show the per-signal numbers:
 
 ```bash
-signals csv accounts.csv -s funding.json -s hiring.json -s exec.json --buy-linkedin --dry-run
+tiga signals csv accounts.csv -s funding.json -s hiring.json -s exec.json --buy-linkedin --dry-run
 ```
 
 3. After approval, run without `--dry-run` and with `-o scored.csv`.
@@ -306,7 +306,7 @@ A definition file uses the Tiga API's create-signal body: `{"label": ..., "compu
 
 ---
 
-## Per-run flags (`signals run` and `signals csv`)
+## Per-run flags (`tiga signals run` and `tiga signals csv`)
 
 | Flag | Default | Effect |
 |---|---|---|
@@ -324,7 +324,7 @@ A definition file uses the Tiga API's create-signal body: `{"label": ..., "compu
 - `--started-within`, `--exclude-advisor-roles`
 - `--job-title` (repeatable), `--location`, `--exact-match`
 
-**`signals csv` only:**
+**`tiga signals csv` only:**
 - `-i`, or the first argument, or `-` for stdin
 - `-o` (default: stdout)
 - `--col Field=Header`

@@ -1,13 +1,13 @@
 ---
 name: enrich-cli
-description: "Run standalone waterfall contact enrichment from the command line using the `enrich` CLI tool. Use for enriching CSV files of contacts or looking up a single person across 9 data vendors (Findymail, Prospeo, Apollo, Lusha, Seamless, Dropcontact, Hunter, Datagma, LeadIQ), resolving LinkedIn or Sales Navigator URNs via Renidly, verifying emails with ZeroBounce, finding mobile phone numbers, cleaning messy person/company names with OpenAI, researching company LinkedIn URLs/domains, and managing vendor API keys (`enrich keys`). Trigger for requests such as 'enrich this CSV', 'find email/phone for this contact with enrich', 'run waterfall enrichment on a file', 'resolve Sales Nav URNs and find emails', or 'configure enrich API keys'."
+description: "Run standalone waterfall contact enrichment from the command line using the `tiga enrich` command. Use for enriching CSV files of contacts or looking up a single person across 9 data vendors (Findymail, Prospeo, Apollo, Lusha, Seamless, Dropcontact, Hunter, Datagma, LeadIQ), resolving LinkedIn or Sales Navigator URNs via Renidly, verifying emails with ZeroBounce, finding mobile phone numbers, cleaning messy person/company names with OpenAI, researching company LinkedIn URLs/domains, and managing vendor API keys (`tiga keys`). Trigger for requests such as 'enrich this CSV', 'find email/phone for this contact with enrich', 'run waterfall enrichment on a file', 'resolve Sales Nav URNs and find emails', or 'configure enrich API keys'."
 ---
 
 # Enrich CLI Skill
 
-`enrich` is a standalone, scriptable command-line tool that runs multi-vendor waterfall enrichment against CSV files of contacts or single individuals. It cascades through configured data providers in priority order and stops as soon as all requested target fields (`email`, `linkedin`, `phone`) are found.
+`tiga enrich` is a standalone, scriptable command that runs multi-vendor waterfall enrichment against CSV files of contacts or single individuals. It cascades through configured data providers in priority order and stops as soon as all requested target fields (`email`, `linkedin`, `phone`) are found.
 
-**CLI basics.** Invoke `enrich` directly from the shell (`enrich person`, `enrich csv`, `enrich keys`). Keys are persisted locally in `~/.config/tiga/config.json` (or overridden via environment variables). Never print, echo, or log raw API keys—always use `enrich keys list` which masks them automatically.
+**CLI basics.** The tool is installed as the `tiga` binary. Invoke it directly from the shell (`tiga enrich person`, `tiga enrich csv`, `tiga keys`). Keys are persisted locally in `~/.config/tiga/config.json` (or overridden via environment variables). Never print, echo, or log raw API keys—always use `tiga keys list` which masks them automatically.
 
 **Related skills:** use **list-building** when discovering net-new accounts/people inside the Tiga platform, **signals** to score lists, and **sequence-runner** to enroll enriched contacts.
 
@@ -15,11 +15,11 @@ description: "Run standalone waterfall contact enrichment from the command line 
 
 ## Operating principles
 
-1. **Check configured keys first.** Before running any enrichment, run `enrich keys list` (or `enrich keys list --json`) to see which waterfall and feature vendors have active API keys. Never assume a vendor key is present without checking.
-2. **Inspect CSV headers before running.** Always inspect the first 5 rows (`head -n 5 input.csv`) to verify column names. `enrich csv` auto-detects common header names, but if a file uses unusual headers (e.g. `Work Mail`, `prospect_li`, `Employer`), pass explicit `--col-*` override flags.
+1. **Check configured keys first.** Before running any enrichment, run `tiga keys list` (or `tiga keys list --json`) to see which waterfall and feature vendors have active API keys. Never assume a vendor key is present without checking.
+2. **Inspect CSV headers before running.** Always inspect the first 5 rows (`head -n 5 input.csv`) to verify column names. `tiga enrich csv` auto-detects common header names, but if a file uses unusual headers (e.g. `Work Mail`, `prospect_li`, `Employer`), pass explicit `--col-*` override flags.
 3. **Only enable the target fields and features needed.** By default, each run seeks `--email` and `--linkedin` while keeping `--phone`, `--verify-email`, `--clean-names`, and `--research-company` off. Mobile phone reveals, ZeroBounce verification, and OpenAI name cleaning consume extra credits or latency—only enable them when the user's goal calls for them.
 4. **Waterfall stops early.** For each contact, `enrich` evaluates which requested target fields are still missing before calling the next vendor. Once every enabled target field is populated (and verified, if `--verify-email` is on), the waterfall stops immediately for that contact.
-5. **Approval gates.** Running `enrich keys list` and inspecting local CSV files are free and never require approval. Before running a paid enrichment against a CSV batch or enabling high-cost flags (`--phone`, `--verify-email`, `--clean-names`, `--resolve-urn`), stop and state:
+5. **Approval gates.** Running `tiga keys list` and inspecting local CSV files are free and never require approval. Before running a paid enrichment against a CSV batch or enabling high-cost flags (`--phone`, `--verify-email`, `--clean-names`, `--resolve-urn`), stop and state:
    - How many rows will be processed
    - Which waterfall vendors will run and in what order
    - Which paid features/targets are enabled (`email`, `linkedin`, `phone`, `verify-email`, `clean-names`, `resolve-urn`, `research-company`)
@@ -71,44 +71,44 @@ When `--vendors` is not passed, `enrich` automatically runs every waterfall vend
 
 ---
 
-## Workflow 1: Manage Vendor API Keys (`enrich keys`)
+## Workflow 1: Manage Vendor API Keys (`tiga keys`)
 
 Keys are stored in `~/.config/tiga/config.json` (with `0600` permissions). Environment variables (`FINDYMAIL_API_KEY`, `PROSPEO_API_KEY`, `APOLLO_API_KEY`, `LUSHA_API_KEY`, `SEAMLESS_API_KEY`, `DROPCONTACT_API_KEY`, `HUNTER_API_KEY`, `DATAGMA_API_KEY`, `LEADIQ_API_KEY`, `RENIDLY_API_KEY`, `ZEROBOUNCE_API_KEY`, `OPENAI_API_KEY`) automatically take precedence over the config file.
 
 1. **Audit configured keys** (safe—keys are masked):
    ```bash
-   enrich keys list
+   tiga keys list
    ```
    Or inspect programmatically as JSON:
    ```bash
-   enrich keys list --json
+   tiga keys list --json
    ```
 
 2. **Add or update vendor keys:**
    ```bash
-   enrich keys set findymail "fm_live_..."
-   enrich keys set prospeo "pr_live_..."
-   enrich keys set apollo "ap_live_..."
-   enrich keys set lusha "lu_live_..."
-   enrich keys set renidly "rnd-..."
-   enrich keys set zerobounce "zb_..."
-   enrich keys set openai "sk-..."
+   tiga keys set findymail "fm_live_..."
+   tiga keys set prospeo "pr_live_..."
+   tiga keys set apollo "ap_live_..."
+   tiga keys set lusha "lu_live_..."
+   tiga keys set renidly "rnd-..."
+   tiga keys set zerobounce "zb_..."
+   tiga keys set openai "sk-..."
    ```
 
 3. **Remove a vendor key** so it no longer runs by default:
    ```bash
-   enrich keys rm datagma
+   tiga keys rm datagma
    ```
 
 ---
 
-## Workflow 2: Single Contact Lookup (`enrich person`)
+## Workflow 2: Single Contact Lookup (`tiga enrich person`)
 
-Use `enrich person` when the user asks to look up one specific person in chat without creating a CSV.
+Use `tiga enrich person` when the user asks to look up one specific person in chat without creating a CSV.
 
 ### Use Case 2A: Find work email and LinkedIn URL from Name + Domain
 ```bash
-enrich person \
+tiga enrich person \
   --first-name "Patrick" \
   --last-name "Collison" \
   --company "Stripe" \
@@ -119,7 +119,7 @@ enrich person \
 ### Use Case 2B: JSON output with specific vendor order & ZeroBounce verification
 When a script or agent needs structured JSON and wants to restrict the waterfall to specific vendors with strict deliverability verification:
 ```bash
-enrich person \
+tiga enrich person \
   --first-name "Jane" \
   --last-name "Doe" \
   --company "Acme Corp" \
@@ -151,7 +151,7 @@ Response shape:
 ### Use Case 2C: Full-Name splitting + Mobile Phone lookup
 If the user provides an unsplit full name and wants both email and mobile phone:
 ```bash
-enrich person \
+tiga enrich person \
   --name "Satya Nadella" \
   --domain "microsoft.com" \
   --email \
@@ -161,9 +161,9 @@ enrich person \
 
 ---
 
-## Workflow 3: Standard CSV Batch Waterfall (`enrich csv`)
+## Workflow 3: Standard CSV Batch Waterfall (`tiga enrich csv`)
 
-Use `enrich csv` for standard prospect lists. It preserves **100% of the original CSV columns and row ordering**, appending 16 enrichment and provenance columns at the end of each row:
+Use `tiga enrich csv` for standard prospect lists. It preserves **100% of the original CSV columns and row ordering**, appending 16 enrichment and provenance columns at the end of each row:
 `enriched_first_name`, `enriched_last_name`, `enriched_email`, `email_source`, `email_verified`, `enriched_phone`, `phone_source`, `enriched_person_linkedin`, `person_linkedin_source`, `enriched_title`, `enriched_company_name`, `enriched_domain`, `enriched_company_linkedin`, `company_linkedin_source`, `enrich_status`, `enrich_error`.
 
 The `enrich_error` column lists only real vendor failures, such as auth, credits, non-2xx responses or timeouts. Several failures are separated by `; `. A vendor that was skipped because the row lacked the inputs it needs is not an error. A vendor that found no match is not an error either. When every vendor was skipped or found nothing, the row's `enrich_status` is `not_found`. A row can be `enriched` or `partial` and still have a non-empty `enrich_error` from a vendor that failed before another one succeeded.
@@ -189,7 +189,7 @@ The `enrich_error` column lists only real vendor failures, such as auth, credits
 
 2. **After user approval, run the batch waterfall:**
    ```bash
-   enrich csv \
+   tiga enrich csv \
      -i prospects.csv \
      -o prospects_enriched.csv \
      --concurrency 10 \
@@ -211,7 +211,7 @@ Conference attendee exports, scraped directories, and webinar signups often have
 Combine **explicit column mapping**, **OpenAI name cleaning**, and **ZeroBounce verification** in one command:
 
 ```bash
-enrich csv \
+tiga enrich csv \
   -i conference_attendees.csv \
   -o conference_enriched.csv \
   --col-name "Speaker Name" \
@@ -237,10 +237,10 @@ enrich csv \
 
 Exports from LinkedIn Sales Navigator or scraping tools often contain only a raw profile URN (e.g. `urn:li:fs_salesProfile:(ACoAAAAKXBwBikfbNJww68eYvcu2dqDYJhHbp4g,NAME_SEARCH,xyz)` or `ACoAAAA...`) without a public `/in/` handle, company name, or domain.
 
-Requires the `renidly` API key (`enrich keys set renidly <key>`).
+Requires the `renidly` API key (`tiga keys set renidly <key>`).
 
 ```bash
-enrich csv \
+tiga enrich csv \
   -i sales_nav_export.csv \
   -o sales_nav_enriched.csv \
   --col-urn "Sales Nav URN" \
@@ -269,7 +269,7 @@ When building a call blitz list where direct dials / mobile numbers are the prim
 
 ### Use Case 6A: Mobile phones only (when CSV already has LinkedIn URLs)
 ```bash
-enrich csv \
+tiga enrich csv \
   -i linkedin_leads.csv \
   -o call_list.csv \
   --phone \
@@ -281,7 +281,7 @@ enrich csv \
 
 ### Use Case 6B: Full omni-channel enrichment (Verified Email + LinkedIn URL + Mobile Phone)
 ```bash
-enrich csv \
+tiga enrich csv \
   -i target_executives.csv \
   -o executives_omnichannel.csv \
   --email \
@@ -299,7 +299,7 @@ enrich csv \
 ### Use Case 7A: LinkedIn URLs only → Find Verified Work Emails
 When the input CSV only has a column of LinkedIn profile URLs (`https://www.linkedin.com/in/...`):
 ```bash
-enrich csv \
+tiga enrich csv \
   -i linkedin_urls_only.csv \
   -o linkedin_with_emails.csv \
   --resolve-urn \
@@ -313,7 +313,7 @@ enrich csv \
 ### Use Case 7B: Work Emails + Names → Find Person & Company LinkedIn URLs
 When you have inbound signup emails (`first_name`, `last_name`, `email`) and only need LinkedIn URLs and company firmographics without spending email-finder credits:
 ```bash
-enrich csv \
+tiga enrich csv \
   -i inbound_signups.csv \
   -o signups_with_linkedin.csv \
   --no-email \
@@ -326,12 +326,12 @@ enrich csv \
 
 ## Workflow 8: Unix Pipelines & Post-Run Reporting
 
-`enrich csv` reads from `stdin` when `-i` is omitted (or `-`) and writes CSV to `stdout` when `-o` is omitted (or `-`). Progress logs are always written to `stderr` (and can be silenced with `--quiet`), making `enrich` safe for shell pipelines.
+`tiga enrich csv` reads from `stdin` when `-i` is omitted (or `-`) and writes CSV to `stdout` when `-o` is omitted (or `-`). Progress logs are always written to `stderr` (and can be silenced with `--quiet`), making `enrich` safe for shell pipelines.
 
 ### Use Case 8A: Enrich only a subset of rows via pipe
 Enrich only the first 20 rows (or rows matching a filter) without creating intermediate input files:
 ```bash
-head -n 21 large_list.csv | enrich csv --quiet --vendors findymail,prospeo > sample_20_enriched.csv
+head -n 21 large_list.csv | tiga enrich csv --quiet --vendors findymail,prospeo > sample_20_enriched.csv
 ```
 
 ### Use Case 8B: Post-run summary report script
@@ -365,7 +365,7 @@ if not_found:
 
 ## Complete CLI Flag Reference
 
-### `enrich person` & `enrich csv` shared flags
+### `tiga enrich person` & `tiga enrich csv` shared flags
 | Flag | Default | Description |
 |---|---|---|
 | `--email` / `--no-email` | `true` | Seek work email address in the waterfall |
@@ -379,7 +379,7 @@ if not_found:
 | `--verify-email` / `--no-verify-email` | `false` | Validate discovered emails via ZeroBounce (`zerobounce` key) |
 | `--config <path>` | `~/.config/tiga/config.json` | Custom path to key configuration file |
 
-### `enrich person` specific flags
+### `tiga enrich person` specific flags
 | Flag | Description |
 |---|---|
 | `--first-name <str>` | Contact's first name |
@@ -396,7 +396,7 @@ if not_found:
 | `--title <str>` | Job title |
 | `--format <fmt>` | Output format: `json` (default), `table`, or `csv` |
 
-### `enrich csv` specific flags
+### `tiga enrich csv` specific flags
 | Flag | Description |
 |---|---|
 | `-i`, `--input <path>` | Input CSV file path (or `-` / omit for `stdin`; also accepts first positional arg) |

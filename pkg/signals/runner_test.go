@@ -65,7 +65,7 @@ func TestNewRunnerErrors(t *testing.T) {
 	}{
 		{"none", nil, runOpts(), "at least one signal is required"},
 		{"type", []Signal{snr}, runOpts(), `signal "Search": type search is not available in this version yet`},
-		{"key", []Signal{gpt}, RunOptions{}, "signals keys set openai"},
+		{"key", []Signal{gpt}, RunOptions{}, "tiga keys set openai"},
 	}
 	for _, c := range cases {
 		if _, err := NewRunner(c.sigs, c.opt); err == nil || !strings.Contains(err.Error(), c.want) {

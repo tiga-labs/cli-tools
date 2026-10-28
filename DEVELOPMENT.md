@@ -1,19 +1,22 @@
 # Development
 
-This guide is for working on `cli-tools` itself. To *use* `enrich`, see the [README](README.md).
+This guide is for working on `cli-tools` itself. To *use* `tiga`, see the [README](README.md).
 
 ## Repo layout
 
 ```text
 cmd/
-  enrich/         # The enrich CLI entrypoint (flags, subcommands, CSV file handling)
-  <future-tool>/  # Add new CLI entrypoints here; the Makefile builds all cmd/* automatically
+  tiga/           # The tiga binary: dispatches to enrich/signals, owns `tiga keys` and `tiga version`
+internal/
+  enrichcmd/      # `tiga enrich` subcommands (flags, CSV file handling)
+  signalscmd/     # `tiga signals` subcommands (flags, CSV file handling, e2e tests)
 pkg/
   enrich/         # Waterfall enrichment engine and vendor adapters
   freeemail/      # Free/disposable email domain detector
   urlutil/        # URL, domain, LinkedIn handle/slug, and hash utilities
 skills/
-  enrich-cli/     # Claude Code / AI agent skill for the enrich CLI
+  enrich-cli/     # Claude Code / AI agent skill for `tiga enrich`
+  signals-cli/    # Claude Code / AI agent skill for `tiga signals`
 .github/workflows/release.yml   # Publishes GitHub Releases on v* tags
 .goreleaser.yaml                # Release build configuration
 install.sh                      # One-line installer (attached to every release)
@@ -27,8 +30,8 @@ install.sh                      # One-line installer (attached to every release)
 ## Build and test
 
 ```bash
-make build                  # build every tool in cmd/* into bin/<tool> for this machine
-make build-enrich-mac-x86   # build enrich for Intel macOS into bin/enrich-darwin-amd64
+make build                  # build bin/tiga for this machine
+make build-mac-x86-tiga     # build tiga for Intel macOS into bin/tiga-darwin-amd64
 make test                   # unit + integration tests (go test -race -cover ./...)
 ```
 
@@ -40,7 +43,7 @@ These tests call the real vendor APIs and **spend credits**. They never run with
 
 1. Copy [`pkg/enrich/testdata/e2e/contacts.example.json`](pkg/enrich/testdata/e2e/contacts.example.json) to `contacts.json` in the same folder and add 2–3 real contacts. This file is gitignored.
 2. Give the tests your API keys in one of two ways:
-   - Run `enrich keys set <vendor> -`.
+   - Run `tiga keys set <vendor> -`.
    - Put `*_API_KEY=...` lines in a gitignored `.env.e2e` at the repo root.
 
    Any vendor without a key is skipped.
@@ -63,9 +66,9 @@ ENRICH_E2E=1 go test -tags e2e -run 'E2EWaterfallVendor/hunter' -count=1 -v ./pk
 
 ### signals
 
-The signals e2e tests live in `cmd/signals/e2e_test.go`. They need the `e2e` build tag and `SIGNALS_E2E=1`, so they never run with `make test`.
+The signals e2e tests live in `internal/signalscmd/e2e_test.go`. They need the `e2e` build tag and `SIGNALS_E2E=1`, so they never run with `make test`.
 
-1. Give the tests your keys: `signals keys set openai -` (and `signals keys set linkdapi -`), or `OPENAI_API_KEY` / `LINKDAPI_API_KEY` lines in `.env.e2e`. Without a linkdapi key, the LinkedIn tests are skipped.
+1. Give the tests your keys: `tiga keys set openai -` (and `tiga keys set linkdapi -`), or `OPENAI_API_KEY` / `LINKDAPI_API_KEY` lines in `.env.e2e`. Without a linkdapi key, the LinkedIn tests are skipped.
 2. Run `make test-e2e-signals`.
 
 Each test uses a fresh cache folder, so it always calls the vendors. One run costs about 6 OpenAI requests, plus up to 25 classifier and 25 research-model calls for the company-posts test, and about 7 linkdapi credits.
@@ -88,9 +91,9 @@ git push origin v0.2.0
 The [`release`](.github/workflows/release.yml) workflow then:
 - runs the tests;
 - builds `darwin`/`linux` × `amd64`/`arm64` binaries;
-- uploads them as `enrich-<os>-<arch>` and `signals-<os>-<arch>`, together with `checksums.txt` and `install.sh`.
+- uploads them as `tiga-<os>-<arch>`, together with `checksums.txt` and `install.sh`.
 
-The version printed by `enrich --version` and `signals --version` comes from the tag. Asset names have no version in them, so `.../releases/latest/download/<asset>` always points at the newest release, and that is the URL the installer uses.
+The version printed by `tiga --version` comes from the tag. Asset names have no version in them, so `.../releases/latest/download/<asset>` always points at the newest release, and that is the URL the installer uses.
 
 To try the release build locally without publishing anything:
 
@@ -98,9 +101,8 @@ To try the release build locally without publishing anything:
 make release-snapshot       # builds into dist/
 ```
 
-## Adding a new tool
+## Adding a new command group
 
-1. Create `cmd/<tool-name>/main.go` (and optional library code under `pkg/<tool-name>/`).
-2. `make build` will automatically discover `cmd/<tool-name>` and build it for your machine.
-3. Add a matching `builds` entry in `.goreleaser.yaml` so the tool is included in releases.
-4. Add the tool name to the `case "$TOOL"` check in `install.sh`, so `TOOL=<tool-name>` installs it.
+1. Create `internal/<name>cmd/` with a `Run(ctx, args, stdin, stdout, stderr) error` entry point (library code goes under `pkg/<name>/`).
+2. Add a `case "<name>"` to `runCLI` in [`cmd/tiga/main.go`](cmd/tiga/main.go) and a line to its root usage.
+3. If it needs API keys, add its vendor registry to the `mergeVendors` call there, so `tiga keys` manages them.

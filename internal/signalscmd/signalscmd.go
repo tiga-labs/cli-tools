@@ -1,4 +1,4 @@
-package main
+package signalscmd
 
 import (
 	"context"
@@ -9,12 +9,9 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/signal"
-	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"text/tabwriter"
 
 	"github.com/tiga-labs/cli-tools/pkg/cliflags"
@@ -25,21 +22,8 @@ import (
 	"github.com/tiga-labs/cli-tools/pkg/signals"
 )
 
-// version is set at release time via -ldflags "-X main.version=...". Builds without it
-// (e.g. `go install ...@v0.1.0`) fall back to the module version embedded by the Go toolchain.
-var version = "dev"
-
-func main() {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-
-	if err := runCLI(ctx, os.Args[1:], os.Stdin, os.Stdout, os.Stderr); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
-}
-
-func runCLI(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
+// Run implements `tiga signals <command>`.
+func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
 		printRootUsage(stderr)
 		return nil
@@ -49,17 +33,8 @@ func runCLI(ctx context.Context, args []string, stdin io.Reader, stdout, stderr 
 	case "-h", "--help", "help":
 		printRootUsage(stdout)
 		return nil
-	case "-v", "--version", "version":
-		info, ok := debug.ReadBuildInfo()
-		fmt.Fprintf(stdout, "signals %s\n", cliflags.ResolveVersion(version, info, ok))
-		return nil
 	case "keys", "key":
-		return cliflags.RunKeys(cliflags.KeysSpec{
-			Tool:    "signals",
-			Vendors: signals.Vendors,
-			VendorHelp: `  openai     (gpt signals: research, classification, verify)
-  linkdapi   (LinkedIn data for LinkedIn signal types)`,
-		}, args[1:], stdin, stdout, stderr)
+		return errors.New("keys moved to the top level: use `tiga keys`")
 	case "run":
 		return runRunCommand(ctx, args[1:], stdout, stderr)
 	case "csv":
@@ -73,15 +48,14 @@ func runCLI(ctx context.Context, args []string, stdin io.Reader, stdout, stderr 
 }
 
 func printRootUsage(w io.Writer) {
-	fmt.Fprintln(w, `signals — run AI signals on a contact, an account, or a CSV of them
+	fmt.Fprintln(w, `tiga signals — run AI signals on a contact, an account, or a CSV of them
 
 Usage:
-  signals <command> [flags]
+  tiga signals <command> [flags]
 
 Commands:
   run         Run signals against one record (flags) and print JSON or a table
   csv         Run signals against every row of a CSV and append result columns
-  keys        Manage vendor API keys (set, rm, list)
   cache       Clear stored results (cache clear [--linkedin])
 
 Signals come from definition files (-s file.json, repeatable; the Tiga create-signal body)
@@ -89,7 +63,8 @@ or inline flags (--prompt "..." [--label ...], or --type <type>). Types: gpt, st
 linkedin_posts, hired_executive, hiring_for_role. Every type but gpt needs LinkedIn data:
 --buy-linkedin and a linkdapi key.
 
-Run "signals <command> --help" for more information on a command.`)
+Manage vendor API keys with "tiga keys".
+Run "tiga signals <command> --help" for more information on a command.`)
 }
 
 // ============================================================================
@@ -266,13 +241,13 @@ func parseFlags(fs *flag.FlagSet, args []string) (positional []string, err error
 }
 
 // ============================================================================
-// Subcommand: signals run
+// Subcommand: tiga signals run
 // ============================================================================
 
 func runRunCommand(ctx context.Context, args []string, stdout, stderr io.Writer) error {
-	fs := flag.NewFlagSet("signals run", flag.ContinueOnError)
+	fs := flag.NewFlagSet("tiga signals run", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	setUsage(fs, "signals run (-s <file.json>... | --prompt <text> | --type <type>) <record flags> [flags]", stderr)
+	setUsage(fs, "tiga signals run (-s <file.json>... | --prompt <text> | --type <type>) <record flags> [flags]", stderr)
 	sf := bindSignalFlags(fs)
 
 	recordFlags := []struct{ flag, field, usage string }{
@@ -399,13 +374,13 @@ func printResults(w io.Writer, format string, sigs []signals.Signal, results []s
 }
 
 // ============================================================================
-// Subcommand: signals csv
+// Subcommand: tiga signals csv
 // ============================================================================
 
 func runCSVCommand(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
-	fs := flag.NewFlagSet("signals csv", flag.ContinueOnError)
+	fs := flag.NewFlagSet("tiga signals csv", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	setUsage(fs, "signals csv <input.csv|-> (-s <file.json>... | --prompt <text> | --type <type>) [-o out.csv] [--dry-run] [flags]", stderr)
+	setUsage(fs, "tiga signals csv <input.csv|-> (-s <file.json>... | --prompt <text> | --type <type>) [-o out.csv] [--dry-run] [flags]", stderr)
 	sf := bindSignalFlags(fs)
 
 	inputPath := fs.String("i", "", "Input CSV file path (or '-' for stdin; also accepts first positional arg)")
@@ -589,16 +564,16 @@ func firstNonEmpty(vals ...string) string {
 }
 
 // ============================================================================
-// Subcommand: signals cache
+// Subcommand: tiga signals cache
 // ============================================================================
 
 func runCacheCommand(args []string, stdout, stderr io.Writer) error {
-	fs := flag.NewFlagSet("signals cache", flag.ContinueOnError)
+	fs := flag.NewFlagSet("tiga signals cache", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	alsoLinkedIn := fs.Bool("linkedin", false, "Also clear cached LinkedIn data (the next run pays linkdapi again)")
 	fs.Usage = func() {
 		fmt.Fprintln(stderr, `Usage:
-  signals cache clear [--linkedin]
+  tiga signals cache clear [--linkedin]
 
 Flags:`)
 		fs.PrintDefaults()
@@ -612,7 +587,7 @@ Flags:`)
 	}
 	if len(posArgs) != 1 || posArgs[0] != "clear" {
 		fs.Usage()
-		return errors.New("usage: signals cache clear [--linkedin]")
+		return errors.New("usage: tiga signals cache clear [--linkedin]")
 	}
 	n, err := resultcache.Clear()
 	if err != nil {

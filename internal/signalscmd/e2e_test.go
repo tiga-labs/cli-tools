@@ -9,7 +9,7 @@
 //
 // The OpenAI key is resolved exactly as the CLI does: OPENAI_API_KEY overrides the config file.
 // Each run makes about 4 calls: 2 web-search research calls and 1–2 classifier calls.
-package main
+package signalscmd
 
 import (
 	"bytes"

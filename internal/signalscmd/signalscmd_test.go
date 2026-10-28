@@ -1,4 +1,4 @@
-package main
+package signalscmd
 
 import (
 	"bytes"
@@ -202,7 +202,7 @@ func TestRunNoOpenAIKey(t *testing.T) {
 	cfg := testConfig(t, "")
 	stub := installStub(t, 200, researchHit)
 	_, _, err := cli(t, "run", "--config", cfg, "--prompt", "{{.AccountName}}", "--account-name", "Acme")
-	if err == nil || !strings.Contains(err.Error(), "signals keys set openai") || stub.calls() != 0 {
+	if err == nil || !strings.Contains(err.Error(), "tiga keys set openai") || stub.calls() != 0 {
 		t.Fatalf("err = %v calls=%d", err, stub.calls())
 	}
 }
@@ -721,7 +721,7 @@ func TestRunHelpListsFieldsAndStatuses(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, want := range []string{"Usage:", "signals " + cmd, "AccountLinkedInUrl", "PersonLi_", "1 success", "3 missing_dependencies", "THREE_MONTHS"} {
+		for _, want := range []string{"Usage:", "tiga signals " + cmd, "AccountLinkedInUrl", "PersonLi_", "1 success", "3 missing_dependencies", "THREE_MONTHS"} {
 			if !strings.Contains(stderr, want) {
 				t.Errorf("%s --help missing %q", cmd, want)
 			}

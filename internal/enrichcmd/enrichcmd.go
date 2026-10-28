@@ -1,4 +1,4 @@
-package main
+package enrichcmd
 
 import (
 	"context"
@@ -9,10 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/signal"
-	"runtime/debug"
 	"strings"
-	"syscall"
 	"text/tabwriter"
 
 	"github.com/tiga-labs/cli-tools/pkg/cliflags"
@@ -20,21 +17,8 @@ import (
 	"github.com/tiga-labs/cli-tools/pkg/enrich"
 )
 
-// version is set at release time via -ldflags "-X main.version=...". Builds without it
-// (e.g. `go install ...@v0.1.0`) fall back to the module version embedded by the Go toolchain.
-var version = "dev"
-
-func main() {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-
-	if err := runCLI(ctx, os.Args[1:], os.Stdin, os.Stdout, os.Stderr); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
-}
-
-func runCLI(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
+// Run implements `tiga enrich <command>`.
+func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
 		printRootUsage(stderr)
 		return nil
@@ -44,12 +28,8 @@ func runCLI(ctx context.Context, args []string, stdin io.Reader, stdout, stderr 
 	case "-h", "--help", "help":
 		printRootUsage(stdout)
 		return nil
-	case "-v", "--version", "version":
-		info, ok := debug.ReadBuildInfo()
-		fmt.Fprintf(stdout, "enrich %s\n", cliflags.ResolveVersion(version, info, ok))
-		return nil
 	case "keys", "key":
-		return runKeysCommand(args[1:], stdin, stdout, stderr)
+		return errors.New("keys moved to the top level: use `tiga keys`")
 	case "person", "contact":
 		return runPersonCommand(ctx, args[1:], stdout, stderr)
 	case "csv":
@@ -61,15 +41,14 @@ func runCLI(ctx context.Context, args []string, stdin io.Reader, stdout, stderr 
 }
 
 func printRootUsage(w io.Writer) {
-	fmt.Fprintln(w, `enrich — Standalone Waterfall Contact Enrichment CLI
+	fmt.Fprintln(w, `tiga enrich — Standalone Waterfall Contact Enrichment
 
 Usage:
-  enrich <command> [flags]
+  tiga enrich <command> [flags]
 
 Commands:
   person      Enrich a single contact via flags and output JSON, table, or CSV
   csv         Run parallel waterfall enrichment against a CSV of contacts
-  keys        Manage vendor API keys (set, rm, list)
 
 Supported Waterfall Vendors (in default execution order):
   findymail, prospeo, apollo, lusha, seamless, dropcontact, hunter, datagma, leadiq
@@ -79,20 +58,8 @@ Supported Feature Vendors:
   zerobounce  (Email deliverability verification)
   openai      (AI person & company name cleaning)
 
-Run "enrich <command> --help" for more information on a command.`)
-}
-
-// ============================================================================
-// Subcommand: enrich keys
-// ============================================================================
-
-func runKeysCommand(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
-	return cliflags.RunKeys(cliflags.KeysSpec{
-		Tool:    "enrich",
-		Vendors: enrich.Vendors,
-		VendorHelp: `  Waterfall: findymail, prospeo, apollo, lusha, seamless, dropcontact, hunter, datagma, leadiq
-  Features:  renidly, zerobounce, openai`,
-	}, args, stdin, stdout, stderr)
+Manage vendor API keys with "tiga keys".
+Run "tiga enrich <command> --help" for more information on a command.`)
 }
 
 // ============================================================================
@@ -163,11 +130,11 @@ func splitCSVList(s string) []string {
 }
 
 // ============================================================================
-// Subcommand: enrich person
+// Subcommand: tiga enrich person
 // ============================================================================
 
 func runPersonCommand(ctx context.Context, args []string, stdout, stderr io.Writer) error {
-	fs := flag.NewFlagSet("enrich person", flag.ContinueOnError)
+	fs := flag.NewFlagSet("tiga enrich person", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 
 	rb := bindRunFlags(fs)
@@ -293,11 +260,11 @@ func runPersonCommand(ctx context.Context, args []string, stdout, stderr io.Writ
 }
 
 // ============================================================================
-// Subcommand: enrich csv
+// Subcommand: tiga enrich csv
 // ============================================================================
 
 func runCSVCommand(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
-	fs := flag.NewFlagSet("enrich csv", flag.ContinueOnError)
+	fs := flag.NewFlagSet("tiga enrich csv", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 
 	rb := bindRunFlags(fs)
@@ -406,10 +373,10 @@ func runCSVCommand(ctx context.Context, args []string, stdin io.Reader, stdout, 
 
 func validateFeatureKeys(cfg *enrich.Config, opts enrich.RunOptions) error {
 	if opts.CleanNames && cfg.GetKey(enrich.VendorOpenAI) == "" {
-		return errors.New("--clean-names requires an OpenAI API key (set via `enrich keys set openai <key>` or OPENAI_API_KEY)")
+		return errors.New("--clean-names requires an OpenAI API key (set via `tiga keys set openai <key>` or OPENAI_API_KEY)")
 	}
 	if opts.VerifyEmail && cfg.GetKey(enrich.VendorZeroBounce) == "" {
-		return errors.New("--verify-email requires a ZeroBounce API key (set via `enrich keys set zerobounce <key>` or ZEROBOUNCE_API_KEY)")
+		return errors.New("--verify-email requires a ZeroBounce API key (set via `tiga keys set zerobounce <key>` or ZEROBOUNCE_API_KEY)")
 	}
 	return nil
 }

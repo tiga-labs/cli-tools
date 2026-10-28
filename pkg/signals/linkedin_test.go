@@ -216,7 +216,7 @@ func TestNewRunnerLinkedInNeedsBuy(t *testing.T) {
 	}
 	noKey := liRunOpts()
 	noKey.LinkdAPIKey = ""
-	if _, err := NewRunner([]Signal{snr}, noKey); err == nil || !strings.Contains(err.Error(), "signals keys set linkdapi") {
+	if _, err := NewRunner([]Signal{snr}, noKey); err == nil || !strings.Contains(err.Error(), "tiga keys set linkdapi") {
 		t.Fatalf("err = %v", err)
 	}
 	// started_new_role without exclusion needs no OpenAI key.

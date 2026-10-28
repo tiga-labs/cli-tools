@@ -87,10 +87,10 @@ func NewRunner(signals []Signal, opt RunOptions) (*Runner, error) {
 		}
 	}
 	if needsOpenAI && !opt.DryRun && strings.TrimSpace(opt.OpenAIKey) == "" {
-		return nil, errors.New("these signals require an OpenAI API key (set via `signals keys set openai -` or OPENAI_API_KEY)")
+		return nil, errors.New("these signals require an OpenAI API key (set via `tiga keys set openai -` or OPENAI_API_KEY)")
 	}
 	if needsLinkdAPI && !opt.DryRun && strings.TrimSpace(opt.LinkdAPIKey) == "" {
-		return nil, errors.New("LinkedIn data requires a linkdapi API key (set via `signals keys set linkdapi -` or LINKDAPI_API_KEY)")
+		return nil, errors.New("LinkedIn data requires a linkdapi API key (set via `tiga keys set linkdapi -` or LINKDAPI_API_KEY)")
 	}
 	return &Runner{
 		signals: signals,
