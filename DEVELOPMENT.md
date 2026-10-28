@@ -10,11 +10,13 @@ cmd/
 internal/
   enrichcmd/      # `tiga enrich` subcommands (flags, CSV file handling)
   signalscmd/     # `tiga signals` subcommands (flags, CSV file handling, e2e tests)
+  skillscmd/      # `tiga skills` (installs the embedded skills for Claude Code and Codex)
 pkg/
   enrich/         # Waterfall enrichment engine and vendor adapters
   freeemail/      # Free/disposable email domain detector
   urlutil/        # URL, domain, LinkedIn handle/slug, and hash utilities
 skills/
+  skills.go       # Embeds every */SKILL.md into the binary for `tiga skills install`
   enrich-cli/     # Claude Code / AI agent skill for `tiga enrich`
   signals-cli/    # Claude Code / AI agent skill for `tiga signals`
 .github/workflows/release.yml   # Publishes GitHub Releases on v* tags

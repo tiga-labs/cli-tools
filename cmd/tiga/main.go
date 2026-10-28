@@ -11,6 +11,7 @@ import (
 
 	"github.com/tiga-labs/cli-tools/internal/enrichcmd"
 	"github.com/tiga-labs/cli-tools/internal/signalscmd"
+	"github.com/tiga-labs/cli-tools/internal/skillscmd"
 	"github.com/tiga-labs/cli-tools/pkg/cliflags"
 	"github.com/tiga-labs/cli-tools/pkg/enrich"
 	"github.com/tiga-labs/cli-tools/pkg/keystore"
@@ -38,9 +39,11 @@ func runCLI(ctx context.Context, args []string, stdin io.Reader, stdout, stderr 
 	}
 
 	switch args[0] {
-	case "-h", "--help", "help":
-		printRootUsage(stdout)
+	case "-h", "--help":
+		printHelp(stdout)
 		return nil
+	case "help":
+		return runHelp(ctx, args[1:], stdin, stdout)
 	case "-v", "--version", "version":
 		info, ok := debug.ReadBuildInfo()
 		fmt.Fprintf(stdout, "tiga %s\n", cliflags.ResolveVersion(version, info, ok))
@@ -49,6 +52,8 @@ func runCLI(ctx context.Context, args []string, stdin io.Reader, stdout, stderr 
 		return enrichcmd.Run(ctx, args[1:], stdin, stdout, stderr)
 	case "signals":
 		return signalscmd.Run(ctx, args[1:], stdin, stdout, stderr)
+	case "skills":
+		return skillscmd.Run(ctx, args[1:], stdin, stdout, stderr)
 	case "keys", "key":
 		return cliflags.RunKeys(cliflags.KeysSpec{
 			Tool:    "tiga",
@@ -90,7 +95,8 @@ Commands:
   enrich      Waterfall contact enrichment (person, csv)
   signals     Run AI signals on a contact, an account, or a CSV (run, csv, cache)
   keys        Manage vendor API keys for every command (list, set, rm)
+  skills      Install the tiga skills for Claude Code and Codex (list, install, uninstall)
   version     Print the tiga version
 
-Run "tiga <command> --help" for more information on a command.`)
+Run "tiga help" for every command and its main flags, or "tiga help <command>" for full flags.`)
 }

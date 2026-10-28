@@ -7,7 +7,7 @@ description: "Run standalone waterfall contact enrichment from the command line 
 
 `tiga enrich` is a standalone, scriptable command that runs multi-vendor waterfall enrichment against CSV files of contacts or single individuals. It cascades through configured data providers in priority order and stops as soon as all requested target fields (`email`, `linkedin`, `phone`) are found.
 
-**CLI basics.** The tool is installed as the `tiga` binary. Invoke it directly from the shell (`tiga enrich person`, `tiga enrich csv`, `tiga keys`). Keys are persisted locally in `~/.config/tiga/config.json` (or overridden via environment variables). Never print, echo, or log raw API keys—always use `tiga keys list` which masks them automatically.
+**CLI basics.** The tool is installed as the `tiga` binary. Invoke it directly from the shell (`tiga enrich person`, `tiga enrich csv`, `tiga keys`). Keys are persisted locally in `~/.config/tiga/config.json` (or overridden via environment variables). Never print, echo, or log raw API keys—always use `tiga keys list` which masks them automatically. `tiga help` lists every command and its main flags, and `tiga help enrich csv` gives the full flag list. Update this skill with `tiga skills install`.
 
 **Related skills:** use **list-building** when discovering net-new accounts/people inside the Tiga platform, **signals** to score lists, and **sequence-runner** to enroll enriched contacts.
 

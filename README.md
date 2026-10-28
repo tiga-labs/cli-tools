@@ -38,6 +38,21 @@ Supported platforms are macOS and Linux, on Intel/AMD (`amd64`) and ARM (`arm64`
 tiga --version
 ```
 
+Run `tiga help` to see every command with its main flags, and `tiga help <command>` (for example `tiga help signals csv`) for the full flag list.
+
+### Install the agent skills
+
+`tiga` ships with skills that teach Claude Code and Codex how to use it. Install them with:
+
+```bash
+tiga skills install            # asks which agents to install for
+tiga skills install --claude   # ~/.claude/skills/<skill>/SKILL.md
+tiga skills install --codex    # ~/.agents/skills/<skill>/SKILL.md
+tiga skills install --claude --codex --project   # into ./.claude/skills and ./.agents/skills instead
+```
+
+Run it again after upgrading `tiga` to update the skills. `tiga skills list` shows what is installed and whether each copy matches your `tiga`. `tiga skills uninstall` removes only the tiga skills.
+
 ---
 
 ## enrich
@@ -222,7 +237,7 @@ To use a different config file for a single run, pass `--config <path>`.
 
 ### Using with AI agents
 
-[`skills/enrich-cli/SKILL.md`](skills/enrich-cli/SKILL.md) is a ready-made skill for Claude Code and other AI agents. It teaches the agent to check your keys, inspect a CSV, ask before spending credits, and report results.
+The `enrich-cli` skill ([source](skills/enrich-cli/SKILL.md)) is a ready-made skill for Claude Code, Codex and other AI agents. Install it with `tiga skills install` (see [Install the agent skills](#install-the-agent-skills)). It teaches the agent to check your keys, inspect a CSV, ask before spending credits, and report results.
 
 ---
 
@@ -332,7 +347,7 @@ Keys live in the same file as the enrich keys, and `tiga keys` manages both. `OP
 
 ### Using with AI agents
 
-[`skills/signals-cli/SKILL.md`](skills/signals-cli/SKILL.md) is a ready-made skill for Claude Code and other AI agents. It teaches the agent to:
+The `signals-cli` skill ([source](skills/signals-cli/SKILL.md)) is a ready-made skill for Claude Code, Codex and other AI agents. Install it with `tiga skills install`. It teaches the agent to:
 - check your keys
 - dry-run before spending, and ask you first
 - keep LinkedIn spend opt-in

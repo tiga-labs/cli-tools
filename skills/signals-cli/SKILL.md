@@ -11,6 +11,8 @@ description: "Run AI research signals from the command line with the `tiga signa
 - `tiga signals run` for one record
 - `tiga signals csv` for a CSV of records
 - `tiga keys` to manage vendor keys
+- `tiga help` for every command and its main flags (`tiga help signals csv` for the full list)
+- `tiga skills install` to update this skill after upgrading `tiga`
 - `tiga signals cache clear` to remove stored results
 
 Keys live in `~/.config/tiga/config.json`, and environment variables override that file. Never print, echo or log a raw API key. Use `tiga keys list`, which masks them.
