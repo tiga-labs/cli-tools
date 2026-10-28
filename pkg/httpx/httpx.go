@@ -23,11 +23,15 @@ var (
 	RetryCount = 3
 	// RetryMaxWait caps the wait between retries, including Retry-After values.
 	RetryMaxWait = 30 * time.Second
+	// SlowTimeout bounds each attempt made with SlowClient (long LLM calls such as web search).
+	SlowTimeout = 5 * time.Minute
 )
 
 var (
 	sharedClientOnce sync.Once
 	sharedClient     *resty.Client
+	slowClientOnce   sync.Once
+	slowClient       *resty.Client
 )
 
 // Client returns the vendor HTTP client. In production a single client is shared so
@@ -38,6 +42,16 @@ func Client() *resty.Client {
 	}
 	sharedClientOnce.Do(func() { sharedClient = build() })
 	return sharedClient
+}
+
+// SlowClient is Client with SlowTimeout instead of Timeout, for calls that legitimately run for
+// minutes. The retry rules are the same.
+func SlowClient() *resty.Client {
+	if Transport != nil {
+		return build().SetTimeout(SlowTimeout).SetTransport(Transport)
+	}
+	slowClientOnce.Do(func() { slowClient = build().SetTimeout(SlowTimeout) })
+	return slowClient
 }
 
 func build() *resty.Client {

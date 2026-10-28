@@ -5,7 +5,7 @@ TOOLS := $(notdir $(wildcard cmd/*))
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 LDFLAGS := -s -w -X main.version=$(VERSION)
 
-.PHONY: all build test test-e2e clean release-snapshot $(addprefix build-,$(TOOLS)) $(addprefix build-mac-x86-,$(TOOLS))
+.PHONY: all build test test-e2e test-e2e-signals clean release-snapshot $(addprefix build-,$(TOOLS)) $(addprefix build-mac-x86-,$(TOOLS))
 
 all: build
 
@@ -38,6 +38,11 @@ test:
 test-e2e:
 	@set -a; [ -f .env.e2e ] && . ./.env.e2e; set +a; \
 	ENRICH_E2E=1 go test -tags e2e -run 'E2E' -count=1 -v -timeout 30m ./pkg/enrich/
+
+# Live end-to-end tests for the signals CLI against OpenAI (about 4 calls). Sources .env.e2e if present.
+test-e2e-signals:
+	@set -a; [ -f .env.e2e ] && . ./.env.e2e; set +a; \
+	SIGNALS_E2E=1 go test -tags e2e -run 'E2E' -count=1 -v -timeout 15m ./cmd/signals/
 
 clean:
 	rm -rf bin/ dist/

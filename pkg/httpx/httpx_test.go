@@ -78,3 +78,13 @@ func TestNoRetryOn500(t *testing.T) {
 		t.Fatalf("500 must not be retried, got %d calls", *calls)
 	}
 }
+
+func TestSlowClientUsesSlowTimeout(t *testing.T) {
+	withTransport(t, func(int) (*http.Response, error) { return response(http.StatusOK, nil), nil })
+	if got := SlowClient().GetClient().Timeout; got != SlowTimeout {
+		t.Fatalf("timeout = %v, want %v", got, SlowTimeout)
+	}
+	if got := Client().GetClient().Timeout; got != Timeout {
+		t.Fatalf("Client timeout changed: %v", got)
+	}
+}
