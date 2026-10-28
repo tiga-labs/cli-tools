@@ -6,7 +6,7 @@ VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev
 LDFLAGS := -s -w -X main.version=$(VERSION)
 INSTALL_DIR ?= /usr/local/bin
 
-.PHONY: all build install test test-e2e test-e2e-signals clean release-snapshot $(addprefix build-,$(TOOLS)) $(addprefix build-mac-x86-,$(TOOLS))
+.PHONY: all build install test test-e2e test-e2e-signals test-chromelive clean release-snapshot $(addprefix build-,$(TOOLS)) $(addprefix build-mac-x86-,$(TOOLS))
 
 all: build
 
@@ -53,6 +53,11 @@ test-e2e:
 test-e2e-signals:
 	@set -a; [ -f .env.e2e ] && . ./.env.e2e; set +a; \
 	SIGNALS_E2E=1 go test -tags e2e -run 'E2E' -count=1 -v -timeout 15m ./internal/signalscmd/
+
+# Live check of pkg/chromeattach against your running Chrome (remote debugging on at
+# chrome://inspect/#remote-debugging). Opens and closes one about:blank tab; click Allow.
+test-chromelive:
+	CHROMELIVE=1 go test -tags chromelive -run Live -count=1 -v ./pkg/chromeattach/
 
 clean:
 	rm -rf bin/ dist/
