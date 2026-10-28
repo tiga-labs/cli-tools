@@ -85,7 +85,17 @@ func mergeVendors(lists ...[]keystore.Vendor) []keystore.Vendor {
 	return out
 }
 
+// logo is printed above the root usage and `tiga help`.
+const logo = `
+████████ ██  ██████   █████       ██████ ██      ██
+   ██    ██ ██       ██   ██     ██      ██      ██
+   ██    ██ ██   ███ ███████     ██      ██      ██
+   ██    ██ ██    ██ ██   ██     ██      ██      ██
+   ██    ██  ██████  ██   ██      ██████ ███████ ██
+`
+
 func printRootUsage(w io.Writer) {
+	fmt.Fprint(w, logo+"\n")
 	fmt.Fprintln(w, `tiga — contact enrichment and AI signals from the command line
 
 Usage:

@@ -86,6 +86,7 @@ OTHER
 `
 
 func printHelp(w io.Writer) {
+	fmt.Fprint(w, logo+"\n")
 	fmt.Fprint(w, helpText)
 }
 
