@@ -4,8 +4,9 @@
 TOOLS := $(notdir $(wildcard cmd/*))
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 LDFLAGS := -s -w -X main.version=$(VERSION)
+INSTALL_DIR ?= /usr/local/bin
 
-.PHONY: all build test test-e2e test-e2e-signals clean release-snapshot $(addprefix build-,$(TOOLS)) $(addprefix build-mac-x86-,$(TOOLS))
+.PHONY: all build install test test-e2e test-e2e-signals clean release-snapshot $(addprefix build-,$(TOOLS)) $(addprefix build-mac-x86-,$(TOOLS))
 
 all: build
 
@@ -15,6 +16,17 @@ build: $(addprefix build-,$(TOOLS))
 $(addprefix build-,$(TOOLS)): build-%:
 	@mkdir -p bin
 	CGO_ENABLED=0 go build -ldflags="$(LDFLAGS)" -o bin/$* ./cmd/$*
+
+# Build tiga and install it to $(INSTALL_DIR) (uses sudo if that directory isn't writable),
+# e.g. `make install` or `make install INSTALL_DIR=$$HOME/.local/bin`
+install: build-tiga
+	@mkdir -p "$(INSTALL_DIR)" 2>/dev/null || sudo mkdir -p "$(INSTALL_DIR)"
+	@if [ -w "$(INSTALL_DIR)" ]; then \
+		install -m 755 bin/tiga "$(INSTALL_DIR)/tiga"; \
+	else \
+		sudo install -m 755 bin/tiga "$(INSTALL_DIR)/tiga"; \
+	fi
+	@echo "Installed $$("$(INSTALL_DIR)/tiga" --version) to $(INSTALL_DIR)/tiga"
 
 # Build any binary for x86_64 macOS: e.g. `make build-mac-x86-tiga`
 $(addprefix build-mac-x86-,$(TOOLS)): build-mac-x86-%:

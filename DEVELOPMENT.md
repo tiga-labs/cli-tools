@@ -34,6 +34,7 @@ install.sh                      # One-line installer (attached to every release)
 ```bash
 make build                  # build bin/tiga for this machine
 make build-mac-x86-tiga     # build tiga for Intel macOS into bin/tiga-darwin-amd64
+make install                # build tiga and install it to /usr/local/bin (INSTALL_DIR=... to change; sudo if needed)
 make test                   # unit + integration tests (go test -race -cover ./...)
 ```
 
