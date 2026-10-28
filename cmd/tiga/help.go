@@ -11,7 +11,7 @@ import (
 const helpText = `tiga — contact enrichment and AI signals from the command line
 
 Usage: tiga <command> [<subcommand>] [flags]
-Flags may come before or after positional arguments. Every command takes --config <path>.
+Flags may come before or after positional arguments. Commands that use vendor keys take --config <path>.
 
 ENRICH — find work emails, LinkedIn URLs and phones across a waterfall of vendors
 
@@ -59,6 +59,20 @@ SIGNALS — ask AI research questions about contacts and accounts
   Examples:
     tiga signals run --account-name Stripe --account-domain stripe.com --prompt "Has {{.AccountName}} raised funding {{.Last90Days}}?"
     tiga signals csv accounts.csv -s funding.json --dry-run
+
+SALES NAV — import a Sales Navigator lead list or saved search from your own Chrome
+
+  tiga salesnav-list-import <url> [-o out.csv] [--max 1000] [--resume | --force]
+    setup          Chrome 144+, remote debugging on at chrome://inspect/#remote-debugging,
+                   Sales Nav logged in in Chrome's first profile; click Allow on each run
+    pace           slow on purpose: ~2.5 min for 1,000 leads, ~68 min for 7,000 (--max up to 7000);
+                   stops at LinkedIn's first warning (exit 2): wait hours, then --resume
+    output         -o defaults to salesnav-<list|search>-<id>.csv; columns tiga enrich reads as-is
+    chrome         --chrome-user-data-dir <dir> for a non-default Chrome install
+
+  Examples:
+    tiga salesnav-list-import "https://www.linkedin.com/sales/lists/people/123" --max 500
+    tiga salesnav-list-import "https://www.linkedin.com/sales/lists/people/123" --resume
 
 KEYS — vendor API keys for every command, stored in ~/.config/tiga/config.json
 

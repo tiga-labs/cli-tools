@@ -68,12 +68,19 @@ func TestHelpFlagsExist(t *testing.T) {
 	run, scsv, cache := commandFlags(t, "signals", "run"), commandFlags(t, "signals", "csv"), commandFlags(t, "signals", "cache")
 	keys := commandFlags(t, "keys")
 	install, list := commandFlags(t, "skills", "install"), commandFlags(t, "skills", "list")
+	salesnav := commandFlags(t, "salesnav-list-import")
+	for _, f := range []string{"o", "max", "resume", "force", "chrome-user-data-dir"} {
+		if !salesnav[f] {
+			t.Errorf("salesnav-list-import --help does not list -%s", f)
+		}
+	}
 
 	sections := map[string]map[string]bool{
-		"ENRICH":  union(person, ecsv),
-		"SIGNALS": union(run, scsv, cache),
-		"KEYS":    union(keys),
-		"SKILLS":  union(install, list),
+		"ENRICH":    union(person, ecsv),
+		"SIGNALS":   union(run, scsv, cache),
+		"KEYS":      union(keys),
+		"SKILLS":    union(install, list),
+		"SALES NAV": union(salesnav),
 	}
 	for name, flags := range sections {
 		text := quoted.ReplaceAllString(helpSection(t, name+" "), `""`)
@@ -87,6 +94,7 @@ func TestHelpFlagsExist(t *testing.T) {
 	examples := map[string]map[string]bool{
 		"tiga enrich person ": person, "tiga enrich csv ": ecsv,
 		"tiga signals run ": run, "tiga signals csv ": scsv,
+		"tiga salesnav-list-import ": salesnav,
 	}
 	checked := 0
 	for _, line := range strings.Split(helpText, "\n") {
@@ -104,8 +112,8 @@ func TestHelpFlagsExist(t *testing.T) {
 			}
 		}
 	}
-	if checked < 4 {
-		t.Errorf("checked %d examples, want at least 4", checked)
+	if checked < 6 {
+		t.Errorf("checked %d examples, want at least 6", checked)
 	}
 }
 

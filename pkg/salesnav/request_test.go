@@ -8,16 +8,16 @@ import (
 )
 
 func TestPageURLList(t *testing.T) {
-	got := Source{Kind: KindList, ID: "7352369367017299971"}.PageURL(25)
-	want := "https://www.linkedin.com/sales-api/salesApiPeopleSearch?q=peopleSearchQuery&query=(spotlightParam:(selectedType:ALL),doFetchSpotlights:true,doFetchHits:true,doFetchFilters:false,pivotParam:(com.linkedin.sales.search.LeadListPivotRequest:(list:urn%3Ali%3Afs_salesList%3A7352369367017299971,sortCriteria:CREATED_TIME,sortOrder:DESCENDING)),list:(scope:LEAD,includeAll:false,excludeAll:false,includedValues:List((id:7352369367017299971))))&start=25&count=25&decoration=%28entityUrn%2CprofilePictureDisplayImage%2CfirstName%2ClastName%2CfullName%2Cdegree%2CblockThirdPartyDataSharing%2CcrmStatus%2CgeoRegion%2ClistCount%2CdateAddedToListAt%2CpendingInvitation%2Csaved%2CleadAssociatedAccount~fs_salesCompany%28entityUrn%2Cname%2CflagshipCompanyUrl%2Cwebsite%29%2CoutreachActivity%2Cmemorialized%2CsavedAccount~fs_salesCompany%28entityUrn%2Cname%29%2CnotificationUrnOnLeadList%2CuniquePositionCompanyCount%2CcurrentPositions*%28title%2CcompanyName%2Ccurrent%2CcompanyUrn%29%2CmostRecentEntityNote%28body%2ClastModifiedAt%2CnoteId%2Cseat%2Centity%2CownerInfo%2Cownership%2Cvisibility%29%29"
+	got := Source{Kind: KindList, ID: "7000000000000000001"}.PageURL(25)
+	want := "https://www.linkedin.com/sales-api/salesApiPeopleSearch?q=peopleSearchQuery&query=(spotlightParam:(selectedType:ALL),doFetchSpotlights:true,doFetchHits:true,doFetchFilters:false,pivotParam:(com.linkedin.sales.search.LeadListPivotRequest:(list:urn%3Ali%3Afs_salesList%3A7000000000000000001,sortCriteria:CREATED_TIME,sortOrder:DESCENDING)),list:(scope:LEAD,includeAll:false,excludeAll:false,includedValues:List((id:7000000000000000001))))&start=25&count=25&decoration=%28entityUrn%2CprofilePictureDisplayImage%2CfirstName%2ClastName%2CfullName%2Cdegree%2CblockThirdPartyDataSharing%2CcrmStatus%2CgeoRegion%2ClistCount%2CdateAddedToListAt%2CpendingInvitation%2Csaved%2CleadAssociatedAccount~fs_salesCompany%28entityUrn%2Cname%2CflagshipCompanyUrl%2Cwebsite%29%2CoutreachActivity%2Cmemorialized%2CsavedAccount~fs_salesCompany%28entityUrn%2Cname%29%2CnotificationUrnOnLeadList%2CuniquePositionCompanyCount%2CcurrentPositions*%28title%2CcompanyName%2Ccurrent%2CcompanyUrn%29%2CmostRecentEntityNote%28body%2ClastModifiedAt%2CnoteId%2Cseat%2Centity%2CownerInfo%2Cownership%2Cvisibility%29%29"
 	if got != want {
 		t.Fatalf("PageURL =\n%s\nwant\n%s", got, want)
 	}
 }
 
 func TestPageURLSavedSearch(t *testing.T) {
-	src := Source{Kind: KindSavedSearch, ID: "1929545378", SessionID: "RGnoY2t0R72UfGqkItwziQ==", LastViewedAt: "1752770598757"}
-	want := "https://www.linkedin.com/sales-api/salesApiLeadSearch?q=savedSearchId&start=0&count=25&savedSearchId=1929545378&lastViewedAt=1752770598757&trackingParam=(sessionId:RGnoY2t0R72UfGqkItwziQ==)&decorationId=com.linkedin.sales.deco.desktop.searchv2.LeadSearchResult-14"
+	src := Source{Kind: KindSavedSearch, ID: "1000000001", SessionID: "SAMPLEsessionIdAAAAAAQ==", LastViewedAt: "1700000000000"}
+	want := "https://www.linkedin.com/sales-api/salesApiLeadSearch?q=savedSearchId&start=0&count=25&savedSearchId=1000000001&lastViewedAt=1700000000000&trackingParam=(sessionId:SAMPLEsessionIdAAAAAAQ==)&decorationId=com.linkedin.sales.deco.desktop.searchv2.LeadSearchResult-14"
 	if got := src.PageURL(0); got != want {
 		t.Fatalf("PageURL =\n%s\nwant\n%s", got, want)
 	}

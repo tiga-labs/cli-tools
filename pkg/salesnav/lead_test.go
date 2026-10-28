@@ -22,21 +22,21 @@ func TestParsePageList(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(page.Leads) != 25 || page.Start != 0 || page.Count != 25 || page.Total != 98 {
+	if len(page.Leads) != 25 || page.Start != 0 || page.Count != 25 || page.Total != 120 {
 		t.Fatalf("got %d leads, start %d count %d total %d", len(page.Leads), page.Start, page.Count, page.Total)
 	}
 	want := Lead{
 		FirstName:       "First1",
 		LastName:        "Last1",
 		FullName:        "First1 Last1",
-		Title:           "Co-CEO & Co-Founder",
-		CompanyName:     "poolside",
-		CompanyLinkedIn: "https://www.linkedin.com/company/94859563",
+		Title:           "Title 1",
+		CompanyName:     "Company 1",
+		CompanyLinkedIn: "https://www.linkedin.com/company/1001",
 		Location:        "City 1, State, United States",
-		LinkedInURN:     "urn:li:fs_salesProfile:(ACwAAREDACTED1,NAME_SEARCH,N3S6)",
-		SalesNavURL:     "https://www.linkedin.com/sales/lead/ACwAAREDACTED1,NAME_SEARCH,N3S6",
+		LinkedInURN:     "urn:li:fs_salesProfile:(ACwAAREDACTED1,NAME_SEARCH,TK01)",
+		SalesNavURL:     "https://www.linkedin.com/sales/lead/ACwAAREDACTED1,NAME_SEARCH,TK01",
 		Degree:          "2",
-		DateAddedToList: "2025-08-15T00:39:17Z",
+		DateAddedToList: "2023-11-15T22:13:20Z",
 		SourceURL:       src.URL,
 	}
 	if got := page.Leads[1]; got != want {
@@ -53,13 +53,13 @@ func TestParsePageSavedSearch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(page.Leads) != 25 || page.Total != 987 {
+	if len(page.Leads) != 25 || page.Total != 900 {
 		t.Fatalf("got %d leads, total %d", len(page.Leads), page.Total)
 	}
 	l := page.Leads[1]
-	if l.Title != "Owner/ Engineer" || l.CompanyName != "Waller Engineering, PLLC" ||
-		l.CompanyLinkedIn != "https://www.linkedin.com/company/108142003" || l.Degree != "3" ||
-		l.DateAddedToList != "" || l.LinkedInURN != "urn:li:fs_salesProfile:(ACwAAREDACTED1,NAME_SEARCH,86OM)" {
+	if l.Title != "Title 1" || l.CompanyName != "Company 1" ||
+		l.CompanyLinkedIn != "https://www.linkedin.com/company/1001" || l.Degree != "3" ||
+		l.DateAddedToList != "" || l.LinkedInURN != "urn:li:fs_salesProfile:(ACwAAREDACTED1,NAME_SEARCH,TK01)" {
 		t.Errorf("lead[1] = %+v", l)
 	}
 	var outOfNetwork bool

@@ -27,7 +27,7 @@ func fakeTerminal(t *testing.T, tty bool) {
 
 func TestBundlesBothSkills(t *testing.T) {
 	names := strings.Join(skills.Names(), ",")
-	if names != "enrich-cli,signals-cli" {
+	if names != "enrich-cli,salesnav-cli,signals-cli" {
 		t.Fatalf("bundled skills = %s", names)
 	}
 }
@@ -47,12 +47,13 @@ func TestInstallBothAgents(t *testing.T) {
 			}
 		}
 	}
-	if n := strings.Count(out, "installed"); n != 4 {
-		t.Errorf("want 4 installed lines, got %d:\n%s", n, out)
+	want := 2 * len(skills.Names()) // every skill, for Claude Code and Codex
+	if n := strings.Count(out, "installed"); n != want {
+		t.Errorf("want %d installed lines, got %d:\n%s", want, n, out)
 	}
 
 	// A second run changes nothing; an edited copy is updated.
-	if out, _ := cli(t, "", "install", "--claude", "--codex", "--dir", base); strings.Count(out, "unchanged") != 4 {
+	if out, _ := cli(t, "", "install", "--claude", "--codex", "--dir", base); strings.Count(out, "unchanged") != want {
 		t.Errorf("rerun:\n%s", out)
 	}
 	edited := filepath.Join(base, ".claude/skills/enrich-cli/SKILL.md")
@@ -62,7 +63,7 @@ func TestInstallBothAgents(t *testing.T) {
 	if out, _ := cli(t, "", "list", "--dir", base); !strings.Contains(out, "differs") {
 		t.Errorf("list should flag the edited copy:\n%s", out)
 	}
-	if out, _ := cli(t, "", "install", "--claude", "--dir", base); !strings.Contains(out, "updated") || strings.Count(out, "unchanged") != 1 {
+	if out, _ := cli(t, "", "install", "--claude", "--dir", base); !strings.Contains(out, "updated") || strings.Count(out, "unchanged") != len(skills.Names())-1 {
 		t.Errorf("update run:\n%s", out)
 	}
 }
@@ -123,7 +124,7 @@ func TestUninstallLeavesOtherSkills(t *testing.T) {
 		t.Fatal(err)
 	}
 	out, err := cli(t, "", "uninstall", "--claude", "--dir", base)
-	if err != nil || strings.Count(out, "removed") != 2 {
+	if err != nil || strings.Count(out, "removed") != len(skills.Names()) {
 		t.Fatalf("err=%v out=\n%s", err, out)
 	}
 	if _, err := os.Stat(filepath.Join(base, ".claude/skills/enrich-cli")); !os.IsNotExist(err) {

@@ -61,7 +61,11 @@ func TestReadmeSignalsExamples(t *testing.T) {
 	if start < 0 {
 		t.Fatal("README has no ## signals section")
 	}
-	if _, commands := checkDocExamples(t, readme[start:]); commands < 3 {
+	section := readme[start+1:]
+	if end := strings.Index(section, "\n## "); end >= 0 {
+		section = section[:end] // stop at the next command's section
+	}
+	if _, commands := checkDocExamples(t, section); commands < 3 {
 		t.Fatalf("README signals section has %d checked commands", commands)
 	}
 }

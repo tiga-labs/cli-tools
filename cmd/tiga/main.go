@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"syscall"
 
 	"github.com/tiga-labs/cli-tools/internal/enrichcmd"
+	"github.com/tiga-labs/cli-tools/internal/salesnavcmd"
 	"github.com/tiga-labs/cli-tools/internal/signalscmd"
 	"github.com/tiga-labs/cli-tools/internal/skillscmd"
 	"github.com/tiga-labs/cli-tools/pkg/cliflags"
@@ -28,8 +30,21 @@ func main() {
 
 	if err := runCLI(ctx, os.Args[1:], os.Stdin, os.Stdout, os.Stderr); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		os.Exit(exitCode(err))
 	}
+}
+
+// exitCode is 0 for nil, the error's own ExitCode() when it has one (salesnav-list-import
+// exits 2 when LinkedIn stops a run), and 1 otherwise.
+func exitCode(err error) int {
+	if err == nil {
+		return 0
+	}
+	var coded interface{ ExitCode() int }
+	if errors.As(err, &coded) {
+		return coded.ExitCode()
+	}
+	return 1
 }
 
 func runCLI(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
@@ -54,6 +69,8 @@ func runCLI(ctx context.Context, args []string, stdin io.Reader, stdout, stderr 
 		return signalscmd.Run(ctx, args[1:], stdin, stdout, stderr)
 	case "skills":
 		return skillscmd.Run(ctx, args[1:], stdin, stdout, stderr)
+	case "salesnav-list-import":
+		return salesnavcmd.Run(ctx, args[1:], stdout, stderr)
 	case "keys", "key":
 		return cliflags.RunKeys(cliflags.KeysSpec{
 			Tool:    "tiga",
@@ -104,6 +121,7 @@ Usage:
 Commands:
   enrich      Waterfall contact enrichment (person, csv)
   signals     Run AI signals on a contact, an account, or a CSV (run, csv, cache)
+  salesnav-list-import  Import a Sales Navigator lead list or saved search from your Chrome
   keys        Manage vendor API keys for every command (list, set, rm)
   skills      Install the tiga skills for Claude Code and Codex (list, install, uninstall)
   version     Print the tiga version

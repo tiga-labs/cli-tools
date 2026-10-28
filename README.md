@@ -6,6 +6,7 @@
 |---|---|
 | [`tiga enrich`](#enrich) | Finds work emails, LinkedIn profiles and phone numbers for contacts, across 9 data vendors |
 | [`tiga signals`](#signals) | Runs AI research signals on contacts and accounts: funding, hiring, new roles, executive hires, LinkedIn posts |
+| [`tiga salesnav-list-import`](#salesnav-list-import) | Imports a Sales Navigator lead list or saved search from your own logged-in Chrome into a CSV |
 | [`tiga keys`](#api-keys-and-configuration) | Manages the vendor API keys for both, in one key file (`~/.config/tiga/config.json`) |
 
 `tiga` is a single binary for macOS and Linux.
@@ -353,6 +354,94 @@ The `signals-cli` skill ([source](skills/signals-cli/SKILL.md)) is a ready-made 
 - keep LinkedIn spend opt-in
 - filter on status
 - report what was found and not found
+
+---
+
+## salesnav-list-import
+
+**Import a Sales Navigator lead list or saved search into a CSV, from the Chrome you already use.**
+
+`tiga salesnav-list-import` opens a tab in your logged-in Chrome and pages through the list the same way Sales Navigator does, one page of 25 leads at a time. It writes every page to the CSV as it goes. It needs no Tiga account, no browser extension and no API key.
+
+- Your LinkedIn account comes first. Paging is slow on purpose, and the import stops at LinkedIn's first warning instead of retrying.
+- It only reads. It never saves leads, sends messages or changes anything on LinkedIn.
+- A stopped or interrupted import keeps what it pulled and can be resumed.
+- The CSV's columns are the ones `tiga enrich csv` reads, so you can enrich it straight away.
+
+### Before you start
+
+1. Use Chrome 144 or newer. Turn on remote debugging once at `chrome://inspect/#remote-debugging`.
+2. Log into Sales Navigator in **Chrome's first profile** (the one Chrome created first, often named "Person 1"). tiga can only use that profile.
+3. Each run, Chrome asks "Allow remote debugging?". Click **Allow**.
+
+### Quick start
+
+```bash
+# A lead list or saved search, with the URL copied from the address bar
+tiga salesnav-list-import 'https://www.linkedin.com/sales/lists/people/123'
+
+# Up to 3,000 leads, to a file you name
+tiga salesnav-list-import 'https://www.linkedin.com/sales/lists/people/123' --max 3000 -o leads.csv
+
+# Continue a stopped import (it prints this command for you)
+tiga salesnav-list-import 'https://www.linkedin.com/sales/lists/people/123' -o leads.csv --resume
+
+# Throw the file away and start over
+tiga salesnav-list-import 'https://www.linkedin.com/sales/lists/people/123' -o leads.csv --force
+```
+
+Quote the URL: saved-search URLs contain `&`. Unsaved searches and account lists are not supported; save the search first, then copy its URL.
+
+### How long it takes
+
+The default is 1,000 leads, and `--max` goes up to 7,000.
+
+| Leads | Time |
+|---|---|
+| 1,000 | about 2.5 minutes |
+| 3,000 | about 25 minutes |
+| 7,000 | about 70 minutes |
+
+After the first 1,000 leads it slows down and takes a short break every 500 leads. Sales Nav limits saved-search results, so for a big pull save the leads to a lead list and import the list.
+
+### When it stops
+
+| Exit code | Meaning |
+|---|---|
+| 0 | Done. It prints the file and the `tiga enrich csv` command to run next. |
+| 1 | A setup problem (Chrome not reachable, the prompt cancelled, Sales Nav not logged in) or Ctrl-C. The message says what to fix. |
+| 2 | LinkedIn pushed back (for example `429: too many requests`). The leads so far are saved. Wait hours, not minutes, then run the printed `--resume` command. |
+
+Run one import at a time.
+
+### The CSV
+
+| Column | What it is |
+|---|---|
+| `first_name`, `last_name`, `full_name` | The lead's name |
+| `title`, `company_name`, `company_linkedin` | Their current position |
+| `location` | Their location in Sales Nav |
+| `linkedin_urn` | The Sales Nav lead id. `tiga enrich csv` turns it into a LinkedIn profile URL. |
+| `sales_nav_url` | A link to the lead in Sales Nav |
+| `degree` | Connection degree: 1, 2, 3, or -1 for out of network |
+| `date_added_to_list` | When the lead was added (lead lists only) |
+| `source_url` | The list or search it came from |
+
+### Then enrich it
+
+```bash
+tiga enrich csv -i salesnav-list-123.csv -o salesnav-list-123-enriched.csv
+```
+
+See [enrich](#enrich) for keys and options.
+
+### Using with AI agents
+
+The `salesnav-cli` skill ([source](skills/salesnav-cli/SKILL.md)) is a ready-made skill for Claude Code, Codex and other AI agents. Install it with `tiga skills install`. It teaches the agent to:
+- check your Chrome setup and remind you to click Allow
+- ask before importing more than 1,000 leads
+- never retry after LinkedIn pushes back
+- hand the CSV to `tiga enrich`
 
 ---
 

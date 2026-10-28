@@ -6,10 +6,10 @@ import (
 )
 
 func TestParseURL(t *testing.T) {
-	const listID = "7352369367017299971"
+	const listID = "7000000000000000001"
 	list := func(u string) Source { return Source{Kind: KindList, ID: listID, URL: u} }
-	const search = "https://www.linkedin.com/sales/search/people?lastViewedAt=1752770598757&savedSearchId=1929545378&sessionId=RGnoY2t0R72UfGqkItwziQ%3D%3D"
-	const searchNoLVA = "https://www.linkedin.com/sales/search/people?savedSearchId=1929545378&sessionId=RGnoY2t0R72UfGqkItwziQ%3D%3D"
+	const search = "https://www.linkedin.com/sales/search/people?lastViewedAt=1700000000000&savedSearchId=1000000001&sessionId=SAMPLEsessionIdAAAAAAQ%3D%3D"
+	const searchNoLVA = "https://www.linkedin.com/sales/search/people?savedSearchId=1000000001&sessionId=SAMPLEsessionIdAAAAAAQ%3D%3D"
 
 	ok := []struct {
 		in   string
@@ -22,8 +22,8 @@ func TestParseURL(t *testing.T) {
 		{"https://linkedin.com/sales/lists/people/" + listID, list("https://linkedin.com/sales/lists/people/" + listID)},
 		{"https://WWW.LinkedIn.com/sales/lists/people/" + listID, list("https://WWW.LinkedIn.com/sales/lists/people/" + listID)},
 		{"  http://www.linkedin.com/sales/lists/people/" + listID + "  ", list("http://www.linkedin.com/sales/lists/people/" + listID)},
-		{search, Source{Kind: KindSavedSearch, ID: "1929545378", SessionID: "RGnoY2t0R72UfGqkItwziQ==", LastViewedAt: "1752770598757", URL: search}},
-		{searchNoLVA, Source{Kind: KindSavedSearch, ID: "1929545378", SessionID: "RGnoY2t0R72UfGqkItwziQ==", URL: searchNoLVA}},
+		{search, Source{Kind: KindSavedSearch, ID: "1000000001", SessionID: "SAMPLEsessionIdAAAAAAQ==", LastViewedAt: "1700000000000", URL: search}},
+		{searchNoLVA, Source{Kind: KindSavedSearch, ID: "1000000001", SessionID: "SAMPLEsessionIdAAAAAAQ==", URL: searchNoLVA}},
 	}
 	for _, tt := range ok {
 		got, err := ParseURL(tt.in)
@@ -40,7 +40,7 @@ func TestParseURL(t *testing.T) {
 		in   string
 		want error
 	}{
-		{"https://www.linkedin.com/sales/search/people?savedSearchId=1929545378", ErrMissingSession},
+		{"https://www.linkedin.com/sales/search/people?savedSearchId=1000000001", ErrMissingSession},
 		{"https://www.linkedin.com/sales/search/people?query=(filters:List())", ErrUnsavedSearch},
 		{"https://www.linkedin.com/sales/lists/company/123", ErrAccountList},
 		{"https://www.linkedin.com/sales/lists/people/123)%26start=0", ErrNotSalesNav},
@@ -61,10 +61,10 @@ func TestParseURL(t *testing.T) {
 }
 
 func TestSlug(t *testing.T) {
-	if got := (Source{Kind: KindList, ID: "7352369367017299971"}).Slug(); got != "list-7352369367017299971" {
+	if got := (Source{Kind: KindList, ID: "7000000000000000001"}).Slug(); got != "list-7000000000000000001" {
 		t.Errorf("list Slug = %q", got)
 	}
-	if got := (Source{Kind: KindSavedSearch, ID: "1929545378"}).Slug(); got != "search-1929545378" {
+	if got := (Source{Kind: KindSavedSearch, ID: "1000000001"}).Slug(); got != "search-1000000001" {
 		t.Errorf("search Slug = %q", got)
 	}
 }

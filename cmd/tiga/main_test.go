@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -77,5 +79,27 @@ func TestKeysCoverBothTools(t *testing.T) {
 	}
 	if n := strings.Count(out, "openai"); n != 1 {
 		t.Errorf("openai listed %d times, want 1:\n%s", n, out)
+	}
+}
+
+type codeErr struct{ code int }
+
+func (e codeErr) Error() string { return "coded" }
+func (e codeErr) ExitCode() int { return e.code }
+
+func TestExitCode(t *testing.T) {
+	tests := []struct {
+		err  error
+		want int
+	}{
+		{nil, 0},
+		{errors.New("x"), 1},
+		{codeErr{2}, 2},
+		{fmt.Errorf("wrapped: %w", codeErr{2}), 2},
+	}
+	for _, tt := range tests {
+		if got := exitCode(tt.err); got != tt.want {
+			t.Errorf("exitCode(%v) = %d, want %d", tt.err, got, tt.want)
+		}
 	}
 }
