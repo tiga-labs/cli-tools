@@ -41,6 +41,8 @@ type Result struct {
 	Status  Status   `json:"status"`
 	Sources []Source `json:"sources"`
 	Error   string   `json:"error,omitempty"`
+	// Cached is true when the result came from the on-disk result cache (not stored).
+	Cached bool `json:"-"`
 }
 
 // Found reports whether the signal hit.

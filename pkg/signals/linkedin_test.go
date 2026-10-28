@@ -219,15 +219,6 @@ func TestNewRunnerLinkedInNeedsBuy(t *testing.T) {
 	if _, err := NewRunner([]Signal{snr}, noKey); err == nil || !strings.Contains(err.Error(), "signals keys set linkdapi") {
 		t.Fatalf("err = %v", err)
 	}
-	for _, body := range []string{
-		`{"label":"Exec","computed_config":{"type":"hired_executive","is_account_insight":true,"prompt":"CFO"}}`,
-		`{"label":"Hiring","computed_config":{"type":"hiring_for_role","is_account_insight":true,"hiring_for_role":{"job_titles":["AE"]}}}`,
-		`{"label":"Co posts","computed_config":{"type":"linkedin_posts","is_account_insight":true,"prompt":"funding"}}`,
-	} {
-		if _, err := NewRunner([]Signal{parseSignal(t, body)}, liRunOpts()); err == nil || !strings.Contains(err.Error(), "not available in this version yet") {
-			t.Errorf("%s: err = %v", body, err)
-		}
-	}
 	// started_new_role without exclusion needs no OpenAI key.
 	noOpenAI := liRunOpts()
 	noOpenAI.OpenAIKey = ""
@@ -305,5 +296,39 @@ func TestPlanLinkdAPICalls(t *testing.T) {
 	p := r.Plan(recs)[0]
 	if p.LinkdAPICalls != 1 || p.RowsReady != 3 || p.RowsMissingDeps != 1 || p.MaxOpenAICalls != 0 || p.Bool || stub.calls() != 0 {
 		t.Fatalf("plan = %+v calls=%d", p, stub.calls())
+	}
+}
+
+func TestStartedNewRoleBoundaryDay(t *testing.T) {
+	// THREE_MONTHS from 2026-10-28 12:00 starts on 2026-07-28; a role starting that day matches.
+	withLiCache(t)
+	newStubOpenAI(t, map[string]func(int) *http.Response{"/profile/full": always(200, profileJSON(position(42, "Acme", "VP Sales", ymdJSON(2026, 7, 28), current)))})
+	if res := RunStartedNewRole(context.Background(), snrSignal(t, ""), jane, liClient(), "", liNow); res.Status != StatusSuccess {
+		t.Fatalf("res = %+v", res)
+	}
+}
+
+func TestStartedNewRoleUsesProfileName(t *testing.T) {
+	// Rows that share a profile share one result, so the value must not carry a row's own name.
+	withLiCache(t)
+	newStubOpenAI(t, map[string]func(int) *http.Response{"/profile/full": always(200, profileJSON(position(42, "Acme", "VP Sales", ymdJSON(2026, 9, 1), current)))})
+	r := mustRunner(t, []Signal{snrSignal(t, "")}, liRunOpts())
+	a := r.Run(context.Background(), jane.With("FirstName", "Jon"))
+	b := r.Run(context.Background(), jane.With("FirstName", "Jonathan"))
+	if !strings.Contains(a[0].Value, "Jane Doe started") || a[0].Value != b[0].Value {
+		t.Fatalf("a=%q b=%q", a[0].Value, b[0].Value)
+	}
+}
+
+func TestPlanRefreshCountsCachedProfiles(t *testing.T) {
+	withLiCache(t)
+	newStubOpenAI(t, map[string]func(int) *http.Response{"/profile/full": always(200, profileJSON())})
+	if _, err := liClient().Profile(context.Background(), "jane-doe"); err != nil {
+		t.Fatal(err)
+	}
+	opt := liRunOpts()
+	opt.RefreshLinkedIn = true
+	if p := mustRunner(t, []Signal{snrSignal(t, "")}, opt).Plan([]Record{jane})[0]; p.LinkdAPICalls != 1 {
+		t.Fatalf("refresh dry-run must count cached profiles: %+v", p)
 	}
 }

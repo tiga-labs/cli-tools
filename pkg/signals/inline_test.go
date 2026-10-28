@@ -20,8 +20,9 @@ func TestFromInlineHiring(t *testing.T) {
 	if _, err := FromInline(Inline{Type: "hiring_for_role", Account: true, JobTitles: []string{"SDR", "AE"}}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := FromInline(Inline{Type: "hiring_for_role", JobTitles: []string{"SDR"}}); err == nil || !strings.Contains(err.Error(), "account") {
-		t.Fatalf("err = %v", err)
+	// Account-only types need no --account.
+	if s, err := FromInline(Inline{Type: "hiring_for_role", JobTitles: []string{"SDR"}}); err != nil || !s.Config.IsAccountInsight {
+		t.Fatalf("s=%+v err=%v", s.Config, err)
 	}
 }
 

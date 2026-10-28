@@ -56,7 +56,7 @@ func TestVendorsRegistry(t *testing.T) {
 
 func TestNewRunnerErrors(t *testing.T) {
 	gpt := gptDef(t, "Funding", "Has {{.AccountName}} raised?")
-	snr := parseSignal(t, `{"label":"Exec","computed_config":{"type":"hired_executive","is_account_insight":true,"prompt":"CFO"}}`)
+	snr := Signal{Label: "Search", Config: Config{Type: "search"}} // Parse rejects it; NewRunner must too
 	cases := []struct {
 		name string
 		sigs []Signal
@@ -64,7 +64,7 @@ func TestNewRunnerErrors(t *testing.T) {
 		want string
 	}{
 		{"none", nil, runOpts(), "at least one signal is required"},
-		{"type", []Signal{snr}, runOpts(), `signal "Exec": type hired_executive is not available in this version yet`},
+		{"type", []Signal{snr}, runOpts(), `signal "Search": type search is not available in this version yet`},
 		{"key", []Signal{gpt}, RunOptions{}, "signals keys set openai"},
 	}
 	for _, c := range cases {

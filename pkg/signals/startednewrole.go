@@ -58,7 +58,7 @@ func RunStartedNewRole(ctx context.Context, s Signal, r Record, li *linkdapi.Cli
 		return res
 	}
 
-	windowStart, err := WindowStart(s.Config.StartedNewRoleConfig.StartedNewJobWithin, now)
+	windowStart, err := dayWindowStart(s.Config.StartedNewRoleConfig.StartedNewJobWithin, now)
 	if err != nil {
 		return failed(err)
 	}
@@ -93,9 +93,10 @@ func RunStartedNewRole(ctx context.Context, s Signal, r Record, li *linkdapi.Cli
 				continue
 			}
 		}
-		name := strings.TrimSpace(r.Get("FirstName") + " " + r.Get("LastName"))
+		// The profile's name first: rows that share a profile share this result.
+		name := strings.TrimSpace(profile.FirstName + " " + profile.LastName)
 		if name == "" {
-			name = strings.TrimSpace(profile.FirstName + " " + profile.LastName)
+			name = strings.TrimSpace(r.Get("FirstName") + " " + r.Get("LastName"))
 		}
 		return Result{
 			Status:  StatusSuccess,

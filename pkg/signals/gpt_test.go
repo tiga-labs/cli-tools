@@ -119,7 +119,7 @@ func noSearchOpts() GPTOptions {
 func TestRunGPTNoSearchFound(t *testing.T) {
 	stub := newStubOpenAI(t, map[string]func(int) *http.Response{"/responses": always(200, outputText(`{"output":"<span>Yes</span>","found":true}`))})
 	res := RunGPT(context.Background(), fundingSignal(t, ""), acme, noSearchOpts())
-	if res.Status != StatusSuccess || res.Value != "<span>Yes</span>" || res.Sources == nil || len(res.Sources) != 0 {
+	if res.Status != StatusSuccess || res.Value != "Yes" || res.Sources == nil || len(res.Sources) != 0 {
 		t.Fatalf("res = %+v", res)
 	}
 	body := stub.last("/responses").body

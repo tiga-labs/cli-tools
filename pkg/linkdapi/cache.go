@@ -23,10 +23,9 @@ var CacheDir = func() (string, error) {
 	return filepath.Join(home, ".cache", "tiga", "linkdapi"), nil
 }
 
-// cacheKey hashes the request so neither the API key nor the person's identifier is on disk
-// in the clear.
-func cacheKey(path, param, id string) string {
-	sum := sha256.Sum256([]byte(path + "?" + param + "=" + id))
+// cacheKey hashes a request's path and query into a file name.
+func cacheKey(pathAndQuery string) string {
+	sum := sha256.Sum256([]byte(pathAndQuery))
 	return hex.EncodeToString(sum[:])
 }
 
@@ -83,4 +82,24 @@ func writeCache(key string, body []byte) error {
 		return err
 	}
 	return nil
+}
+
+// ClearCache removes every cached linkdapi response and reports how many were removed.
+func ClearCache() (int, error) {
+	dir, err := CacheDir()
+	if err != nil {
+		return 0, err
+	}
+	files, err := filepath.Glob(filepath.Join(dir, "*.json"))
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, f := range files {
+		if err := os.Remove(f); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return n, err
+		}
+		n++
+	}
+	return n, nil
 }

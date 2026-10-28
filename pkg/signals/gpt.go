@@ -22,6 +22,10 @@ const researchInstructions = "Produce a source-backed business signal using only
 // noSearchInstructions is gandalf's computedColumnSystemPrompt, copied verbatim.
 const noSearchInstructions = "You're job is to generate json output based on inputs.\n\nJSON Output: {\n  output: <text>,\n  found: <boolean> /* True You Successfully found the Output, False You Did Not Find The Output */\n}\nOutput should be formatted html must be wrapped in <span>, may include <b>, <i>, <em>"
 
+// jsonInputSuffix ends every json_object request's input: OpenAI's Responses API requires the
+// word "json" in the input messages, and the instructions field does not count.
+const jsonInputSuffix = "\n\nRespond in JSON."
+
 const verifyInstructions = `Check whether the answer is directly supported by the question's facts and the listed sources. Reply JSON {"supported": <boolean>, "reason": <string>}.`
 
 // verifyNoSourcesInstructions is used when the answer has no sources (web search off, D12).
@@ -144,7 +148,7 @@ func reasonJSON(ctx context.Context, apiKey, model, instructions, prompt string,
 	resp, err := createResponse(ctx, apiKey, map[string]any{
 		"model":             model,
 		"instructions":      instructions,
-		"input":             prompt,
+		"input":             prompt + jsonInputSuffix,
 		"max_output_tokens": maxTokens,
 		"text":              map[string]any{"format": map[string]any{"type": "json_object"}},
 	})
@@ -161,7 +165,7 @@ func reasonJSON(ctx context.Context, apiKey, model, instructions, prompt string,
 	if err := json.Unmarshal([]byte(resp.text()), &out); err != nil {
 		return false, "", errors.New("openai: invalid JSON output")
 	}
-	return out.Found, strings.TrimSpace(out.Output), nil
+	return out.Found, stripValueHTML(out.Output), nil
 }
 
 // verify asks the research model whether the answer is supported by its sources (K2).
@@ -179,7 +183,7 @@ func verify(ctx context.Context, apiKey, model, prompt string, res Result) (bool
 	resp, err := createResponse(ctx, apiKey, map[string]any{
 		"model":        model,
 		"instructions": instructions,
-		"input":        input.String(),
+		"input":        input.String() + jsonInputSuffix,
 		"text":         map[string]any{"format": map[string]any{"type": "json_object"}},
 	})
 	if err != nil {

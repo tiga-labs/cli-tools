@@ -13,6 +13,7 @@ type Inline struct {
 	Account             bool
 	WordLimit           int
 	JobTitles           []string
+	ExactMatch          bool
 	ExcludeAdvisorRoles bool
 }
 
@@ -23,7 +24,9 @@ func FromInline(in Inline) (Signal, error) {
 	s.Config.Prompt = in.Prompt
 	s.Config.Model = in.Model
 	s.Config.DateRange = in.DateRange
-	s.Config.IsAccountInsight = in.Account
+	// hired_executive and hiring_for_role are account-only, so they need no --account.
+	s.Config.IsAccountInsight = in.Account || in.Type == TypeHiredExecutive || in.Type == TypeHiringForRole
+	s.Config.ExactMatchSearch = in.ExactMatch
 	s.Config.WordLimit = in.WordLimit
 	s.Config.HiringForRole.JobTitles = in.JobTitles
 	s.Config.HiringForRole.Location = in.Location

@@ -27,6 +27,10 @@ type RunOptions struct {
 	RefreshLinkedIn bool
 	// DryRun skips the API key checks: a Plan makes no vendor calls.
 	DryRun bool
+	// ResultCache reads and writes the on-disk result cache (the CLI turns it on); NoCache
+	// skips reading but still writes.
+	ResultCache bool
+	NoCache     bool
 	// Now returns the time used for date merge fields; nil means time.Now.
 	Now func() time.Time
 	// Redact scrubs secrets from every result error; nil leaves errors as they are.
@@ -66,16 +70,18 @@ func NewRunner(signals []Signal, opt RunOptions) (*Runner, error) {
 		switch s.Config.Type {
 		case TypeGPT:
 			needsOpenAI = true
-			needsLinkdAPI = needsLinkdAPI || (opt.BuyLinkedIn && len(personLiDeps(s)) > 0)
-		case TypeStartedNewRole, TypeLinkedInPosts:
-			if s.Config.Type == TypeLinkedInPosts && s.Config.IsAccountInsight {
-				return nil, fmt.Errorf("signal %q: type %s (account) is not available in this version yet", s.Label, s.Config.Type)
-			}
+			needsLinkdAPI = needsLinkdAPI || (opt.BuyLinkedIn && len(linkedInDeps(s)) > 0)
+		case TypeStartedNewRole, TypeLinkedInPosts, TypeHiredExecutive, TypeHiringForRole:
 			if !opt.BuyLinkedIn {
 				return nil, fmt.Errorf("signal %q: %s needs LinkedIn data; add --buy-linkedin (spends linkdapi credits)", s.Label, s.Config.Type)
 			}
 			needsLinkdAPI = true
-			needsOpenAI = needsOpenAI || s.Config.Type == TypeLinkedInPosts || s.Config.StartedNewRoleConfig.ShouldExcludeAdvisorRoles
+			switch s.Config.Type {
+			case TypeStartedNewRole:
+				needsOpenAI = needsOpenAI || s.Config.StartedNewRoleConfig.ShouldExcludeAdvisorRoles
+			case TypeLinkedInPosts, TypeHiredExecutive:
+				needsOpenAI = true
+			}
 		default:
 			return nil, fmt.Errorf("signal %q: type %s is not available in this version yet", s.Label, s.Config.Type)
 		}
@@ -112,7 +118,7 @@ func (r *Runner) Run(ctx context.Context, rec Record) []Result {
 	results := make([]Result, len(r.signals))
 	for i, s := range r.signals {
 		var res Result
-		filled, failure := r.withPersonLi(ctx, s, rec)
+		filled, failure := r.withLinkedInFields(ctx, s, rec)
 		if failure != nil {
 			res = *failure
 		} else {
@@ -142,7 +148,14 @@ func (r *Runner) runShared(ctx context.Context, s Signal, rec Record) Result {
 		r.shared[key] = call
 	}
 	r.mu.Unlock()
-	call.once.Do(func() { call.res = r.execute(ctx, s, rec) })
+	call.once.Do(func() {
+		if res, ok := r.cachedResult(s, rec); ok {
+			call.res = res
+			return
+		}
+		call.res = r.execute(ctx, s, rec)
+		r.storeResult(s, rec, call.res)
+	})
 	res := call.res
 	res.Sources = slices.Clone(res.Sources) // rows never share a slice
 	return res
@@ -153,39 +166,70 @@ func (r *Runner) execute(ctx context.Context, s Signal, rec Record) Result {
 	case TypeStartedNewRole:
 		return RunStartedNewRole(ctx, s, rec, r.li, r.opt.OpenAIKey, r.now())
 	case TypeLinkedInPosts:
+		if s.Config.IsAccountInsight {
+			return RunAccountPosts(ctx, s, rec, r.li, r.gptOptions(s))
+		}
 		return RunPersonPosts(ctx, s, rec, r.li, r.gptOptions(s))
+	case TypeHiredExecutive:
+		return RunAccountPosts(ctx, s, rec, r.li, r.gptOptions(s))
+	case TypeHiringForRole:
+		return RunHiringForRole(ctx, s, rec, r.li, r.now())
 	default:
 		return RunGPT(ctx, s, rec, r.gptOptions(s))
 	}
 }
 
-// personLiDeps returns the PersonLi_* fields a signal's prompt uses.
-func personLiDeps(s Signal) []string {
+// linkedInDeps returns the PersonLi_* and CompanyLi_* fields a signal's prompt uses.
+func linkedInDeps(s Signal) []string {
 	var deps []string
 	for _, d := range s.Config.RequiredDependencies {
-		if strings.HasPrefix(d, personLiPrefix) {
+		if strings.HasPrefix(d, personLiPrefix) || strings.HasPrefix(d, companyLiPrefix) {
 			deps = append(deps, d)
 		}
 	}
 	return deps
 }
 
-// withPersonLi fills a gpt signal's empty PersonLi_* fields from the person's LinkedIn
-// profile when --buy-linkedin is on. A missing or unknown profile leaves them empty (so the
-// signal is status 3); any other fetch failure is returned as the signal's result.
-func (r *Runner) withPersonLi(ctx context.Context, s Signal, rec Record) (Record, *Result) {
+// usesPosts reports whether any of deps needs posts (not just the profile).
+func usesPosts(deps []string) bool {
+	return slices.ContainsFunc(deps, func(d string) bool { return slices.Contains(personLiPostFields, d) })
+}
+
+// withLinkedInFields fills a gpt signal's empty PersonLi_* and CompanyLi_* fields from
+// LinkedIn when --buy-linkedin is on. A missing or unknown profile/company leaves them empty
+// (so the signal is status 3); any other fetch failure is returned as the signal's result.
+func (r *Runner) withLinkedInFields(ctx context.Context, s Signal, rec Record) (Record, *Result) {
 	if !r.opt.BuyLinkedIn || s.Config.Type != TypeGPT {
 		return rec, nil
 	}
-	var needed []string
-	for _, d := range personLiDeps(s) {
-		if strings.TrimSpace(rec.Get(d)) == "" {
-			needed = append(needed, d)
+	var person, company []string
+	for _, d := range linkedInDeps(s) {
+		if strings.TrimSpace(rec.Get(d)) != "" {
+			continue
+		}
+		if strings.HasPrefix(d, companyLiPrefix) {
+			company = append(company, d)
+		} else {
+			person = append(person, d)
 		}
 	}
-	if len(needed) == 0 {
-		return rec, nil
+	var err error
+	if len(person) > 0 {
+		if rec, err = r.fillPersonLi(ctx, rec, person); err != nil {
+			res := failed(err)
+			return rec, &res
+		}
 	}
+	if len(company) > 0 {
+		if rec, err = r.fillCompanyLi(ctx, rec, company); err != nil {
+			res := failed(err)
+			return rec, &res
+		}
+	}
+	return rec, nil
+}
+
+func (r *Runner) fillPersonLi(ctx context.Context, rec Record, needed []string) (Record, error) {
 	username, ok := linkdapi.UsernameFromURL(rec.Get("LinkedInUrl"))
 	if !ok {
 		return rec, nil
@@ -195,20 +239,43 @@ func (r *Runner) withPersonLi(ctx context.Context, s Signal, rec Record) (Record
 		return rec, nil
 	}
 	if err != nil {
-		res := failed(err)
-		return rec, &res
+		return rec, err
 	}
 	var posts []linkdapi.Post
-	if slices.ContainsFunc(needed, func(d string) bool { return slices.Contains(personLiPostFields, d) }) {
+	if usesPosts(needed) {
 		if posts, err = r.li.Posts(ctx, profile.URN); err != nil && !errors.Is(err, linkdapi.ErrNotFound) {
-			res := failed(err)
-			return rec, &res
+			return rec, err
 		}
 		if posts == nil {
 			posts = []linkdapi.Post{}
 		}
 	}
 	fields := PersonLiFields(profile, posts, r.now())
+	for _, d := range needed {
+		rec = rec.With(d, fields[d])
+	}
+	return rec, nil
+}
+
+// fillCompanyLi fills CompanyLi_Posts / CompanyLi_RecentPosts from the newest page of the
+// company's posts.
+func (r *Runner) fillCompanyLi(ctx context.Context, rec Record, needed []string) (Record, error) {
+	slug, ok := linkdapi.CompanySlugFromURL(rec.Get("AccountLinkedInUrl"))
+	if !ok {
+		return rec, nil
+	}
+	id, err := r.li.CompanyID(ctx, slug)
+	if errors.Is(err, linkdapi.ErrCompanyNotFound) {
+		return rec, nil
+	}
+	if err != nil {
+		return rec, err
+	}
+	posts, err := r.li.CompanyPosts(ctx, id, 0)
+	if err != nil && !errors.Is(err, linkdapi.ErrNotFound) {
+		return rec, err
+	}
+	fields := CompanyLiFields(posts, r.now())
 	for _, d := range needed {
 		rec = rec.With(d, fields[d])
 	}
@@ -229,12 +296,26 @@ func (r *Runner) gptOptions(s Signal) GPTOptions {
 // shareKey identifies a signal's inputs on a record: its key, its required field values, and
 // its precondition field's value. Rows with equal keys get the same result.
 func shareKey(s Signal, rec Record) string {
-	parts := []string{s.Key()}
+	return s.Key() + "\x00" + inputsKey(s, rec)
+}
+
+// inputsKey is the row's inputs to s: required field values, the precondition field's value,
+// and AccountName for account types.
+func inputsKey(s Signal, rec Record) string {
+	var parts []string
 	for _, dep := range s.Config.RequiredDependencies {
 		parts = append(parts, rec.Get(dep))
 	}
 	if s.Config.HasPrecondition {
 		parts = append(parts, rec.Get(preconditionField(s.Config.Precondition)))
+	}
+	switch s.Config.Type {
+	case TypeHiredExecutive, TypeHiringForRole, TypeLinkedInPosts:
+		// The company name appears in the prompt or value, so rows that differ in it must not
+		// share a result. LinkedIn fetches are still shared by the client.
+		if s.Config.Type != TypeLinkedInPosts || s.Config.IsAccountInsight {
+			parts = append(parts, rec.Get("AccountName"))
+		}
 	}
 	return strings.Join(parts, "\x00")
 }
@@ -254,9 +335,47 @@ type PlanRow struct {
 	RowsReady              int    `json:"rows_ready"`
 	RowsMissingDeps        int    `json:"rows_missing_deps"`
 	RowsPreconditionFailed int    `json:"rows_precondition_failed"`
+	CachedRows             int    `json:"cached_rows"` // ready rows with a stored result: no calls
 	ResearchCalls          int    `json:"research_calls"`
 	MaxOpenAICalls         int    `json:"max_openai_calls"`
 	LinkdAPICalls          int    `json:"linkdapi_calls"`
+	LinkdAPICredits        int    `json:"linkdapi_credits"` // job searches cost 2 credits each
+}
+
+// linkedInNeeds says which LinkedIn data a signal fetches for a row.
+type linkedInNeeds struct {
+	person, personPosts bool
+	company             bool
+	companyPostPages    int // company post pages read (an upper bound)
+}
+
+func (r *Runner) needs(s Signal) linkedInNeeds {
+	switch s.Config.Type {
+	case TypeStartedNewRole:
+		return linkedInNeeds{person: true}
+	case TypeLinkedInPosts:
+		if s.Config.IsAccountInsight {
+			return linkedInNeeds{company: true, companyPostPages: maxCompanyPostPages}
+		}
+		return linkedInNeeds{person: true, personPosts: true}
+	case TypeHiredExecutive:
+		return linkedInNeeds{company: true, companyPostPages: maxCompanyPostPages}
+	case TypeHiringForRole:
+		return linkedInNeeds{company: true}
+	}
+	var n linkedInNeeds
+	if !r.opt.BuyLinkedIn {
+		return n
+	}
+	for _, d := range linkedInDeps(s) {
+		if strings.HasPrefix(d, companyLiPrefix) {
+			n.company, n.companyPostPages = true, 1
+		} else {
+			n.person = true
+			n.personPosts = n.personPosts || usesPosts([]string{d})
+		}
+	}
+	return n
 }
 
 // Plan estimates a run over recs without any HTTP call (the linkdapi disk cache is read, never
@@ -265,7 +384,8 @@ func (r *Runner) Plan(recs []Record) []PlanRow {
 	now := r.now()
 	plan := make([]PlanRow, len(r.signals))
 	unique := make([]map[string]bool, len(r.signals))
-	profiles := make([]map[string]bool, len(r.signals)) // usernames this signal fetches
+	people := make([]map[string]bool, len(r.signals))    // usernames this signal fetches
+	companies := make([]map[string]bool, len(r.signals)) // company slugs this signal fetches
 	for i, s := range r.signals {
 		plan[i] = PlanRow{Key: s.Key(), Type: s.Config.Type}
 		if s.Config.Type == TypeGPT {
@@ -275,8 +395,7 @@ func (r *Runner) Plan(recs []Record) []PlanRow {
 			plan[i].Bool = opt.Bool || s.Config.ShouldClassifyOutputAsBool
 			plan[i].Verify = opt.Verify || s.Config.AdvancedModelVerify
 		}
-		unique[i] = map[string]bool{}
-		profiles[i] = map[string]bool{}
+		unique[i], people[i], companies[i] = map[string]bool{}, map[string]bool{}, map[string]bool{}
 	}
 
 	for _, rec := range recs {
@@ -294,28 +413,50 @@ func (r *Runner) Plan(recs []Record) []PlanRow {
 				skip(&plan[i].RowsPreconditionFailed)
 				continue
 			}
-			username, validURL := linkdapi.UsernameFromURL(rec.Get("LinkedInUrl"))
-			usesLinkedIn := s.Config.Type == TypeStartedNewRole || s.Config.Type == TypeLinkedInPosts
+			username, validPerson := linkdapi.UsernameFromURL(rec.Get("LinkedInUrl"))
+			slug, validCompany := linkdapi.CompanySlugFromURL(rec.Get("AccountLinkedInUrl"))
+			need := r.needs(s)
 			planned := rec
-			if r.opt.BuyLinkedIn && s.Config.Type == TypeGPT && validURL {
-				// Stand in for fetched PersonLi_* fields.
-				for _, d := range personLiDeps(s) {
-					if strings.TrimSpace(planned.Get(d)) == "" {
+			if s.Config.Type == TypeGPT {
+				// Stand in for fetched LinkedIn fields; without a valid URL they stay missing.
+				need = linkedInNeeds{}
+				for _, d := range linkedInDeps(s) {
+					if !r.opt.BuyLinkedIn || strings.TrimSpace(planned.Get(d)) != "" {
+						continue
+					}
+					if strings.HasPrefix(d, companyLiPrefix) && validCompany {
+						planned = planned.With(d, "\x01"+slug)
+						need.company, need.companyPostPages = true, 1
+					} else if strings.HasPrefix(d, personLiPrefix) && validPerson {
 						planned = planned.With(d, "\x01"+username)
-						usesLinkedIn = true
+						need.person = true
+						need.personPosts = need.personPosts || usesPosts([]string{d})
 					}
 				}
 			}
-			if len(MissingDependencies(s, planned)) > 0 || (usesLinkedIn && !validURL) {
+			if len(MissingDependencies(s, planned)) > 0 || (need.person && !validPerson) || (need.company && !validCompany) {
 				skip(&plan[i].RowsMissingDeps)
 				continue
 			}
 			earlier[s.Key()] = true
 			plan[i].RowsReady++
+			if res, ok := r.cachedResult(s, planned); ok {
+				// A stored result costs nothing and feeds later signals its real value.
+				plan[i].CachedRows++
+				value := ""
+				if res.Status == StatusSuccess {
+					value = res.Value
+				}
+				rec = rec.With(s.Key(), value)
+				continue
+			}
 			key := shareKey(s, planned)
 			unique[i][key] = true
-			if usesLinkedIn {
-				profiles[i][username] = true
+			if need.person {
+				people[i][username] = need.personPosts
+			}
+			if need.company {
+				companies[i][slug] = true
 			}
 			// Stand in for the hit's value: equal inputs give equal values, so later
 			// signals' sharing is counted exactly.
@@ -329,8 +470,11 @@ func (r *Runner) Plan(recs []Record) []PlanRow {
 			if s.Config.StartedNewRoleConfig.ShouldExcludeAdvisorRoles {
 				plan[i].MaxOpenAICalls = plan[i].ResearchCalls * maxAdvisorChecks
 			}
-		case TypeLinkedInPosts:
-			plan[i].MaxOpenAICalls = plan[i].ResearchCalls * (maxPostsClassified + 1)
+		case TypeHiringForRole:
+			// no OpenAI calls
+		case TypeLinkedInPosts, TypeHiredExecutive:
+			// Each classifier hit is followed by a generation call that may still miss.
+			plan[i].MaxOpenAICalls = plan[i].ResearchCalls * 2 * maxPostsClassified
 		default:
 			perCall := 1
 			if plan[i].Bool {
@@ -341,9 +485,7 @@ func (r *Runner) Plan(recs []Record) []PlanRow {
 			}
 			plan[i].MaxOpenAICalls = plan[i].ResearchCalls * perCall
 		}
-		needsPosts := s.Config.Type == TypeLinkedInPosts ||
-			slices.ContainsFunc(personLiDeps(s), func(d string) bool { return slices.Contains(personLiPostFields, d) })
-		for username := range profiles[i] {
+		for username, needsPosts := range people[i] {
 			profile, cached := r.li.CachedProfile(username)
 			if !cached {
 				plan[i].LinkdAPICalls++
@@ -356,6 +498,32 @@ func (r *Runner) Plan(recs []Record) []PlanRow {
 				plan[i].LinkdAPICalls++
 			}
 		}
+		pages := r.needs(s).companyPostPages
+		if s.Config.Type == TypeGPT {
+			pages = 1
+		}
+		titles := jobTitles(s)
+		jobCalls := 0
+		for slug := range companies[i] {
+			id, cached := r.li.CachedCompanyID(slug)
+			if !cached {
+				plan[i].LinkdAPICalls += 1 + pages
+				jobCalls += len(titles)
+				continue
+			}
+			for page := range pages {
+				if !r.li.CachedCompanyPosts(id, page) {
+					plan[i].LinkdAPICalls++
+				}
+			}
+			for _, title := range titles {
+				if !r.li.CachedJobs(id, title) {
+					jobCalls++
+				}
+			}
+		}
+		plan[i].LinkdAPICalls += jobCalls
+		plan[i].LinkdAPICredits = plan[i].LinkdAPICalls + jobCalls
 	}
 	return plan
 }

@@ -90,6 +90,7 @@ func testConfig(t *testing.T, key string) string {
 	t.Helper()
 	t.Setenv("OPENAI_API_KEY", "")
 	t.Setenv("OPENAI_KEY", "")
+	t.Setenv("XDG_CACHE_HOME", t.TempDir()) // each test gets its own result and linkdapi cache
 	path := filepath.Join(t.TempDir(), "config.json")
 	if key != "" {
 		if err := runCLI(context.Background(), []string{"keys", "set", "openai", key, "--config", path}, strings.NewReader(""), io.Discard, io.Discard); err != nil {
@@ -599,5 +600,134 @@ func TestRunPersonPostsInline(t *testing.T) {
 	r := decodeRun(t, out)
 	if r.Results[0].Type != "linkedin_posts" || calls("/api/v1/profile/full") != 1 || calls("/api/v1/posts/all") != 1 || calls("/v1/responses") == 0 {
 		t.Fatalf("out=%s", out)
+	}
+}
+
+func TestRunHiringInline(t *testing.T) {
+	cfg := testConfig(t, "")
+	t.Setenv("LINKDAPI_API_KEY", "")
+	t.Setenv("LINKDAPI_KEY", "")
+	if _, _, err := cli(t, "keys", "set", "linkdapi", "ld-secret-123456", "--config", cfg); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(t.TempDir(), "linkdapi")
+	prev := linkdapi.CacheDir
+	linkdapi.CacheDir = func() (string, error) { return dir, nil }
+	var keywords []string
+	httpx.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		body := `{"success":true,"statusCode":200,"data":{"id":"42","universalName":"acme"}}`
+		if strings.HasSuffix(req.URL.Path, "/search/jobs") {
+			keywords = append(keywords, req.URL.Query().Get("keyword"))
+			body = `{"success":true,"statusCode":200,"data":{"total":2,"jobs":[` +
+				`{"id":"1","url":"https://www.linkedin.com/jobs/view/1","title":"Account Executive","location":"Seattle, WA"},` +
+				`{"id":"2","url":"https://www.linkedin.com/jobs/view/2","title":"Account Manager","location":"Seattle, WA"}]}}`
+		}
+		return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(body))}, nil
+	})
+	t.Cleanup(func() { httpx.Transport = nil; linkdapi.CacheDir = prev })
+
+	out, _, err := cli(t, "run", "--config", cfg, "--type", "hiring_for_role", "--job-title", "Account Executive", "--job-title", "SDR",
+		"--location", "WA", "--exact-match", "--account-name", "Acme", "--account-linkedin", "https://www.linkedin.com/company/acme", "--buy-linkedin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := decodeRun(t, out)
+	if r.Results[0].Status != 1 || !strings.Contains(r.Results[0].Value, `Acme has 1 job with the term "Account Executive" located in Washington`) || len(keywords) != 1 {
+		t.Fatalf("out=%s keywords=%v", out, keywords)
+	}
+	if _, _, err := cli(t, "run", "--config", cfg, "-s", writeSignal(t, "Alpha", "{{.AccountName}}"), "--account-name", "Acme", "--job-title", "AE"); err == nil || !strings.Contains(err.Error(), "--job-title") {
+		t.Fatalf("orphan --job-title: err = %v", err)
+	}
+}
+
+func TestCSVRerunIsFree(t *testing.T) {
+	cfg := testConfig(t, "sk-abcdef123456")
+	stub := installStub(t, 200, researchHit)
+	in := writeFile(t, "in.csv", "company\nAcme\nGlobex\nInitech\n")
+	a, b := writeSignal(t, "Funding", "Has {{.AccountName}} raised?"), writeSignal(t, "Hiring", "Is {{.AccountName}} hiring?")
+	first, _, err := cli(t, "csv", in, "--config", cfg, "-s", a, "-s", b, "--quiet")
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := stub.calls()
+	second, stderr, err := cli(t, "csv", in, "--config", cfg, "-s", a, "-s", b)
+	if err != nil || stub.calls() != calls || second != first {
+		t.Fatalf("rerun: err=%v new calls=%d same output=%v", err, stub.calls()-calls, second == first)
+	}
+	if !strings.Contains(stderr, "funding=success(cached)") {
+		t.Fatalf("progress = %q", stderr)
+	}
+	// Editing one signal re-runs only that signal: 3 rows, one research call each.
+	b2 := writeSignal(t, "Hiring", "Is {{.AccountName}} hiring engineers?")
+	seen := len(stub.inputs())
+	if _, _, err := cli(t, "csv", in, "--config", cfg, "-s", a, "-s", b2, "--quiet"); err != nil {
+		t.Fatal(err)
+	}
+	var research []string
+	for _, input := range stub.inputs()[seen:] {
+		if input != "" { // classifier calls carry no "input"
+			research = append(research, input)
+		}
+	}
+	if len(research) != 3 {
+		t.Fatalf("want 3 research calls for the edited signal, got %d: %q", len(research), research)
+	}
+	for _, input := range research {
+		if !strings.Contains(input, "hiring engineers") || strings.Contains(input, "raised") {
+			t.Fatalf("an unchanged signal was re-run: %q", input)
+		}
+	}
+	// --no-cache forces every signal again.
+	before := stub.calls()
+	cli(t, "csv", in, "--config", cfg, "-s", a, "-s", b, "--quiet", "--no-cache")
+	if stub.calls() == before {
+		t.Fatal("--no-cache made no calls")
+	}
+}
+
+func TestRunCachedFlag(t *testing.T) {
+	cfg := testConfig(t, "sk-abcdef123456")
+	installStub(t, 200, researchHit)
+	args := []string{"run", "--config", cfg, "--prompt", "{{.AccountName}}", "--account-name", "Acme"}
+	first, _, _ := cli(t, args...)
+	second, _, _ := cli(t, args...)
+	if !strings.Contains(first, `"cached": false`) || !strings.Contains(second, `"cached": true`) {
+		t.Fatalf("first=%s second=%s", first, second)
+	}
+}
+
+func TestCacheClear(t *testing.T) {
+	cfg := testConfig(t, "sk-abcdef123456")
+	stub := installStub(t, 200, researchHit)
+	args := []string{"run", "--config", cfg, "--prompt", "{{.AccountName}}", "--account-name", "Acme"}
+	cli(t, args...)
+	out, _, err := cli(t, "cache", "clear")
+	if err != nil || !strings.Contains(out, "Removed 1 cached result") {
+		t.Fatalf("err=%v out=%q", err, out)
+	}
+	before := stub.calls()
+	cli(t, args...)
+	if stub.calls() == before {
+		t.Fatal("cleared cache still hit")
+	}
+	if out, _, err := cli(t, "cache", "clear", "--linkedin"); err != nil || !strings.Contains(out, "LinkedIn") {
+		t.Fatalf("err=%v out=%q", err, out)
+	}
+}
+
+func TestRunHelpListsFieldsAndStatuses(t *testing.T) {
+	for _, cmd := range []string{"run", "csv"} {
+		_, stderr, err := cli(t, cmd, "--help")
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, want := range []string{"Usage:", "signals " + cmd, "AccountLinkedInUrl", "PersonLi_", "1 success", "3 missing_dependencies", "THREE_MONTHS"} {
+			if !strings.Contains(stderr, want) {
+				t.Errorf("%s --help missing %q", cmd, want)
+			}
+		}
+		if strings.Contains(stderr, "LAST_90_DAYS") {
+			t.Errorf("%s --help still shows the invalid LAST_90_DAYS example", cmd)
+		}
 	}
 }

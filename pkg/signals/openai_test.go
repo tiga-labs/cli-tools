@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -26,6 +27,7 @@ func jsonResponse(status int, body string) *http.Response {
 }
 
 type recorded struct {
+	url    *url.URL
 	path   string
 	header http.Header
 	body   map[string]any
@@ -49,7 +51,7 @@ func newStubOpenAI(t *testing.T, handlers map[string]func(n int) *http.Response)
 			_ = json.Unmarshal(raw, &body)
 		}
 		s.mu.Lock()
-		s.reqs = append(s.reqs, recorded{path: req.URL.Path, header: req.Header.Clone(), body: body})
+		s.reqs = append(s.reqs, recorded{url: req.URL, path: req.URL.Path, header: req.Header.Clone(), body: body})
 		var h func(int) *http.Response
 		var n int
 		for suffix, fn := range s.handlers {
@@ -62,10 +64,31 @@ func newStubOpenAI(t *testing.T, handlers map[string]func(n int) *http.Response)
 		if h == nil {
 			return jsonResponse(http.StatusNotFound, `{}`), nil
 		}
+		if err := openAIJSONRule(req.URL.Path, body); err != "" {
+			return jsonResponse(http.StatusBadRequest, `{"error":{"message":"`+err+`"}}`), nil
+		}
 		return h(n), nil
 	})
 	t.Cleanup(func() { httpx.Transport = nil })
 	return s
+}
+
+// openAIJSONRule mirrors OpenAI's Responses API check (seen live, 2026-10-28): a json_object
+// text format needs the word "json" in the input messages; instructions do not count.
+func openAIJSONRule(path string, body map[string]any) string {
+	if !strings.HasSuffix(path, "/responses") {
+		return ""
+	}
+	text, _ := body["text"].(map[string]any)
+	format, _ := text["format"].(map[string]any)
+	if format["type"] != "json_object" {
+		return ""
+	}
+	input, _ := json.Marshal(body["input"])
+	if !strings.Contains(strings.ToLower(string(input)), "json") {
+		return "Response input messages must contain the word 'json' in some form to use 'text.format' of type 'json_object'."
+	}
+	return ""
 }
 
 func (s *stubOpenAI) calls() int {

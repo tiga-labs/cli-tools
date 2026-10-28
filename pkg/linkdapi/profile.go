@@ -92,7 +92,7 @@ type rawProfile struct {
 
 // Profile returns the profile for a LinkedIn username (the linkedin.com/in/<username> slug).
 func (c *Client) Profile(ctx context.Context, username string) (Profile, error) {
-	body, err := c.fetch(ctx, KindProfile, username)
+	body, err := c.fetch(ctx, profileRequest(username))
 	if err != nil {
 		return Profile{}, err
 	}
@@ -163,10 +163,10 @@ func (raw rawProfile) toProfile() Profile {
 	return p
 }
 
-// CachedProfile returns a fresh cached profile without any HTTP call.
+// CachedProfile returns a fresh cached profile without any HTTP call (never for a refreshing
+// Client, which does not read the cache).
 func (c *Client) CachedProfile(username string) (Profile, bool) {
-	ep := endpointFor(KindProfile)
-	body, ok := readCache(cacheKey(ep.path, ep.param, normalizeID(KindProfile, username)), ep.ttl)
+	body, ok := c.cachedBody(profileRequest(username))
 	if !ok {
 		return Profile{}, false
 	}

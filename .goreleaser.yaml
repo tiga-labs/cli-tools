@@ -21,16 +21,21 @@ builds:
     ldflags:
       - -s -w -X main.version={{.Version}}
 
-  # Add future CLI tools under cmd/<tool> here:
-  # - id: another-tool
-  #   main: ./cmd/another-tool
-  #   binary: another-tool
-  #   env:
-  #     - CGO_ENABLED=0
-  #   goos: [darwin, linux]
-  #   goarch: [amd64, arm64]
-  #   ldflags:
-  #     - -s -w -X main.version={{.Version}}
+  - id: signals
+    main: ./cmd/signals
+    binary: signals
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+
+  # Add future CLI tools under cmd/<tool> here, with the same settings.
 
 # Publish raw binaries (no tar/zip) with unversioned names, so install.sh can always fetch
 # https://github.com/tiga-labs/cli-tools/releases/latest/download/<tool>-<os>-<arch>

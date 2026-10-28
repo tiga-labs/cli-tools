@@ -12,8 +12,11 @@ import (
 // personLiPrefix marks merge fields filled from the person's LinkedIn profile.
 const personLiPrefix = "PersonLi_"
 
-// personLiPostFields need the person's posts, not just the profile.
-var personLiPostFields = []string{"PersonLi_Posts", "PersonLi_RecentPosts"}
+// companyLiPrefix marks merge fields filled from the company's LinkedIn page.
+const companyLiPrefix = "CompanyLi_"
+
+// personLiPostFields need posts, not just the profile (CompanyLi_* fields are all posts).
+var personLiPostFields = []string{"PersonLi_Posts", "PersonLi_RecentPosts", "CompanyLi_Posts", "CompanyLi_RecentPosts"}
 
 // recentPostDays and recentRoleChangeDays match gandalf's RecentPosts and RecentRoleChange.
 const (
@@ -66,18 +69,28 @@ func PersonLiFields(p linkdapi.Profile, posts []linkdapi.Post, now time.Time) ma
 	f["PersonLi_RecentRoleChange"] = strconv.FormatBool(recentChange)
 
 	if posts != nil {
-		var all, recent []string
-		for _, post := range posts {
-			line := post.Date.Format("2006-01-02") + ": " + post.Text
-			all = append(all, line)
-			if post.Date.After(now.AddDate(0, 0, -recentPostDays)) {
-				recent = append(recent, line)
-			}
-		}
-		f["PersonLi_Posts"] = strings.Join(all, "\n")
-		f["PersonLi_RecentPosts"] = strings.Join(recent, "\n")
+		f["PersonLi_Posts"], f["PersonLi_RecentPosts"] = postLines(posts, now)
 	}
 	return f
+}
+
+// CompanyLiFields maps a company's posts to the CompanyLi_* merge fields.
+func CompanyLiFields(posts []linkdapi.Post, now time.Time) map[string]string {
+	all, recent := postLines(posts, now)
+	return map[string]string{"CompanyLi_Posts": all, "CompanyLi_RecentPosts": recent}
+}
+
+// postLines formats posts one per line as "YYYY-MM-DD: text": all of them, and the last 14 days.
+func postLines(posts []linkdapi.Post, now time.Time) (all, recent string) {
+	var a, r []string
+	for _, post := range posts {
+		line := post.Date.Format("2006-01-02") + ": " + post.Text
+		a = append(a, line)
+		if post.Date.After(now.AddDate(0, 0, -recentPostDays)) {
+			r = append(r, line)
+		}
+	}
+	return strings.Join(a, "\n"), strings.Join(r, "\n")
 }
 
 func dateOrEmpty(t time.Time) string {

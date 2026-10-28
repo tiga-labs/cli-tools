@@ -153,7 +153,32 @@ func TestRunnerPersonPostsPlanAndKeys(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 	p := mustRunner(t, []Signal{postsSignal(t, "")}, liRunOpts()).Plan([]Record{jane})[0]
-	if p.RowsReady != 1 || p.MaxOpenAICalls != maxPostsClassified+1 || p.LinkdAPICalls != 2 {
+	if p.RowsReady != 1 || p.MaxOpenAICalls != 2*maxPostsClassified || p.LinkdAPICalls != 2 {
 		t.Fatalf("plan = %+v", p)
+	}
+}
+
+func TestPostsDateRangeBoundaryDay(t *testing.T) {
+	// ONE_MONTH from 2026-10-28 12:00 starts on 2026-09-28; a post at 08:00 that day is in range.
+	withLiCache(t)
+	ts := time.Date(2026, 9, 28, 8, 0, 0, 0, time.UTC).UnixMilli()
+	body := fmt.Sprintf(`{"success":true,"statusCode":200,"data":{"posts":[{"urn":"u","url":"https://x/1","text":"boundary morning post","postedAt":{"timestamp":%d}}]}}`, ts)
+	stub := newStubOpenAI(t, map[string]func(int) *http.Response{
+		"/profile/full": always(200, profileJSON()),
+		"/posts/all":    always(200, body),
+		"/responses":    func(int) *http.Response { return jsonFound(false, "") },
+	})
+	RunPersonPosts(context.Background(), postsSignal(t, `,"date_range":"ONE_MONTH"`), jane, liClient(), postsOpts())
+	if stub.count("/responses") != 1 {
+		t.Fatalf("boundary-day post not classified: calls = %d", stub.count("/responses"))
+	}
+}
+
+func TestPlanPostsCeilingCountsGenerationMisses(t *testing.T) {
+	withLiCache(t)
+	newStubOpenAI(t, map[string]func(int) *http.Response{})
+	p := mustRunner(t, []Signal{postsSignal(t, "")}, liRunOpts()).Plan([]Record{jane})[0]
+	if p.MaxOpenAICalls != 2*maxPostsClassified {
+		t.Fatalf("max_openai_calls = %d, want %d (classify + generate per post)", p.MaxOpenAICalls, 2*maxPostsClassified)
 	}
 }

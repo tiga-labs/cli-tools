@@ -1,14 +1,22 @@
 #!/usr/bin/env sh
-# One-line installer for tiga-labs CLI tools (defaults to `enrich`).
+# One-line installer for tiga-labs CLI tools: `enrich` (the default) or `signals`.
 # Downloads a release binary from GitHub Releases and verifies its SHA-256 checksum.
 #
 # Usage:
 #   curl -fsSL https://github.com/tiga-labs/cli-tools/releases/latest/download/install.sh | sh
+#   curl -fsSL .../install.sh | TOOL=signals sh
 #   curl -fsSL .../install.sh | TOOL=enrich VERSION=v0.2.0 INSTALL_DIR="$HOME/.local/bin" sh
 
 set -eu
 
 TOOL="${TOOL:-enrich}"
+case "$TOOL" in
+  enrich|signals) ;;
+  *)
+    echo "Unknown tool: $TOOL (expected enrich or signals)" >&2
+    exit 1
+    ;;
+esac
 INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
 REPO="${REPO:-tiga-labs/cli-tools}"
 VERSION="${VERSION:-latest}"

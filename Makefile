@@ -39,7 +39,9 @@ test-e2e:
 	@set -a; [ -f .env.e2e ] && . ./.env.e2e; set +a; \
 	ENRICH_E2E=1 go test -tags e2e -run 'E2E' -count=1 -v -timeout 30m ./pkg/enrich/
 
-# Live end-to-end tests for the signals CLI against OpenAI (about 4 calls). Sources .env.e2e if present.
+# Live end-to-end tests for the signals CLI (sources .env.e2e if present). OpenAI: about 6 requests
+# plus up to 25 classifier and 25 research-model calls. linkdapi (only with LINKDAPI_API_KEY or
+# LINKDAPI_KEY): about 7 credits; without a linkdapi key those tests skip.
 test-e2e-signals:
 	@set -a; [ -f .env.e2e ] && . ./.env.e2e; set +a; \
 	SIGNALS_E2E=1 go test -tags e2e -run 'E2E' -count=1 -v -timeout 15m ./cmd/signals/

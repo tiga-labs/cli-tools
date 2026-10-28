@@ -16,6 +16,16 @@ func IsWindow(w string) bool {
 	return slices.Contains(Windows, w)
 }
 
+// dayWindowStart is WindowStart rounded down to the start of its day, so a post or role dated
+// any time on the boundary day is inside the window.
+func dayWindowStart(window string, now time.Time) (time.Time, error) {
+	start, err := WindowStart(window, now)
+	if err != nil || start.IsZero() {
+		return start, err
+	}
+	return time.Date(start.Year(), start.Month(), start.Day(), 0, 0, 0, 0, start.Location()), nil
+}
+
 // WindowStart returns the earliest time inside window, measured back from now. An empty
 // window means no limit and returns the zero time.
 func WindowStart(window string, now time.Time) (time.Time, error) {

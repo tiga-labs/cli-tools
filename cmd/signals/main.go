@@ -20,6 +20,8 @@ import (
 	"github.com/tiga-labs/cli-tools/pkg/cliflags"
 	"github.com/tiga-labs/cli-tools/pkg/csvrun"
 	"github.com/tiga-labs/cli-tools/pkg/keystore"
+	"github.com/tiga-labs/cli-tools/pkg/linkdapi"
+	"github.com/tiga-labs/cli-tools/pkg/resultcache"
 	"github.com/tiga-labs/cli-tools/pkg/signals"
 )
 
@@ -62,6 +64,8 @@ func runCLI(ctx context.Context, args []string, stdin io.Reader, stdout, stderr 
 		return runRunCommand(ctx, args[1:], stdout, stderr)
 	case "csv":
 		return runCSVCommand(ctx, args[1:], stdin, stdout, stderr)
+	case "cache":
+		return runCacheCommand(args[1:], stdout, stderr)
 	default:
 		printRootUsage(stderr)
 		return fmt.Errorf("unknown subcommand %q", args[0])
@@ -78,10 +82,11 @@ Commands:
   run         Run signals against one record (flags) and print JSON or a table
   csv         Run signals against every row of a CSV and append result columns
   keys        Manage vendor API keys (set, rm, list)
+  cache       Clear stored results (cache clear [--linkedin])
 
 Signals come from definition files (-s file.json, repeatable; the Tiga create-signal body)
-or inline flags (--prompt "..." [--label ...], or --type started_new_role|linkedin_posts). This
-version runs gpt, started_new_role and person linkedin_posts signals; LinkedIn data needs
+or inline flags (--prompt "..." [--label ...], or --type <type>). Types: gpt, started_new_role,
+linkedin_posts, hired_executive, hiring_for_role. Every type but gpt needs LinkedIn data:
 --buy-linkedin and a linkdapi key.
 
 Run "signals <command> --help" for more information on a command.`)
@@ -110,9 +115,13 @@ type signalFlags struct {
 	model      *string
 	started    *string
 	excludeAdv *bool
+	jobTitles  multiFlag
+	location   *string
+	exactMatch *bool
 	webSearch  cliflags.Toggle
 	buyLI      cliflags.Toggle
 	refreshLI  *bool
+	noCache    *bool
 	boolean    cliflags.Toggle
 	verify     cliflags.Toggle
 }
@@ -122,15 +131,19 @@ func bindSignalFlags(fs *flag.FlagSet) *signalFlags {
 	f.configPath = fs.String("config", "", "Path to config file (default: ~/.config/tiga/config.json)")
 	fs.Var(&f.files, "s", "Signal definition JSON file (repeatable; runs in the order given)")
 	fs.Var(&f.files, "signal", "Same as -s")
-	f.typ = fs.String("type", "", "Inline signal type: gpt (default when --prompt is set), started_new_role, or linkedin_posts (person)")
+	f.typ = fs.String("type", "", "Inline signal type: gpt (default when --prompt is set), started_new_role, linkedin_posts (person; with --account, the company), hired_executive, or hiring_for_role")
 	f.label = fs.String("label", "", "Inline signal label (its column key is the label slug)")
 	f.prompt = fs.String("prompt", "", "Inline signal prompt, with {{.Field}} merge fields")
 	f.account = fs.Bool("account", false, "Inline signal is an account signal")
 	f.wordLimit = fs.Int("word-limit", 0, "Inline signal output word limit")
-	f.dateRange = fs.String("date-range", "", "Inline signal date range (e.g. LAST_90_DAYS)")
+	f.dateRange = fs.String("date-range", "", "Inline linkedin_posts/hired_executive date window (e.g. THREE_MONTHS; one of "+strings.Join(signals.Windows, ", ")+")")
 	f.started = fs.String("started-within", "", "Inline started_new_role window (e.g. THREE_MONTHS; default THIS_YEAR)")
 	f.excludeAdv = fs.Bool("exclude-advisor-roles", false, "Inline started_new_role: skip advisor/board/mentor roles (OpenAI call per role)")
+	fs.Var(&f.jobTitles, "job-title", "Inline hiring_for_role job title to search (repeatable, up to 10; first title with jobs wins)")
+	f.location = fs.String("location", "", "Inline hiring_for_role US state code (e.g. WA; default: anywhere in the US)")
+	f.exactMatch = fs.Bool("exact-match", false, "Inline hiring_for_role: keep only jobs whose title contains the search term")
 	f.buyLI = cliflags.BindToggle(fs, "buy-linkedin", false, "Allow paid linkdapi calls for LinkedIn data (LinkedIn signal types and {{.PersonLi_*}} fields; cached on disk)", "Never call linkdapi")
+	f.noCache = fs.Bool("no-cache", false, "Ignore stored results and recompute (the new results are stored)")
 	f.refreshLI = fs.Bool("refresh-linkedin", false, "Ignore the LinkedIn data cache and refetch (still paid per profile)")
 	f.model = fs.String("model", "", "Research model for every gpt signal (default: the definition's, then "+signals.DefaultGPTModel+")")
 	f.webSearch = cliflags.BindToggle(fs, "web-search", true, "Let gpt signals search the web (hits need sources)", "Disable web search; hits may have no sources")
@@ -153,7 +166,7 @@ func (f *signalFlags) loadSignals() ([]signals.Signal, error) {
 		var orphans []string
 		f.fs.Visit(func(fl *flag.Flag) {
 			switch fl.Name {
-			case "label", "account", "word-limit", "date-range", "started-within", "exclude-advisor-roles":
+			case "label", "account", "word-limit", "date-range", "started-within", "exclude-advisor-roles", "job-title", "location", "exact-match":
 				orphans = append(orphans, "--"+fl.Name)
 			}
 		})
@@ -175,6 +188,9 @@ func (f *signalFlags) loadSignals() ([]signals.Signal, error) {
 			DateRange:           *f.dateRange,
 			StartedWithin:       strings.TrimSpace(*f.started),
 			ExcludeAdvisorRoles: *f.excludeAdv,
+			JobTitles:           f.jobTitles,
+			Location:            strings.TrimSpace(*f.location),
+			ExactMatch:          *f.exactMatch,
 		})
 		if err != nil {
 			return nil, err
@@ -205,8 +221,31 @@ func (f *signalFlags) newRunner(dryRun bool) (*signals.Runner, error) {
 		BuyLinkedIn:     f.buyLI.Value(),
 		RefreshLinkedIn: *f.refreshLI,
 		DryRun:          dryRun,
+		ResultCache:     true,
+		NoCache:         *f.noCache,
 		Redact:          cfg.RedactSecrets,
 	})
+}
+
+// setUsage prints a usage line, the standard merge fields, and the status codes before the
+// flag list.
+func setUsage(fs *flag.FlagSet, usage string, stderr io.Writer) {
+	fs.Usage = func() {
+		fmt.Fprintf(stderr, `Usage:
+  %s
+
+Standard fields (for {{.Field}} in prompts and --col Field=Header; any CSV column also works as {{.column}}):
+  Person:  %s
+  Account: %s
+  With --buy-linkedin: PersonLi_* (Headline, About, Experience, Posts, RecentPosts, ...) and CompanyLi_Posts, CompanyLi_RecentPosts
+
+Status codes (the _status column / "status"):
+  1 success  2 not_found  3 missing_dependencies  4 failed  5 precondition_failed
+
+Flags:
+`, usage, strings.Join(signals.PersonFields, ", "), strings.Join(signals.AccountFields, ", "))
+		fs.PrintDefaults()
+	}
 }
 
 // valueFlags lists every flag on fs that takes a value, for SplitPositionalAndFlags.
@@ -233,6 +272,7 @@ func parseFlags(fs *flag.FlagSet, args []string) (positional []string, err error
 func runRunCommand(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("signals run", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	setUsage(fs, "signals run (-s <file.json>... | --prompt <text> | --type <type>) <record flags> [flags]", stderr)
 	sf := bindSignalFlags(fs)
 
 	recordFlags := []struct{ flag, field, usage string }{
@@ -309,6 +349,7 @@ type resultJSON struct {
 	StatusName string           `json:"status_name"`
 	Sources    []signals.Source `json:"sources"`
 	Error      string           `json:"error,omitempty"`
+	Cached     bool             `json:"cached"`
 }
 
 func printResults(w io.Writer, format string, sigs []signals.Signal, results []signals.Result) error {
@@ -326,6 +367,7 @@ func printResults(w io.Writer, format string, sigs []signals.Signal, results []s
 			out.Results = append(out.Results, resultJSON{
 				Key: s.Key(), Label: s.Label, Type: s.Config.Type, Value: res.Value,
 				Status: res.Status, StatusName: res.Status.String(), Sources: sources, Error: res.Error,
+				Cached: res.Cached,
 			})
 		}
 		enc := json.NewEncoder(w)
@@ -363,6 +405,7 @@ func printResults(w io.Writer, format string, sigs []signals.Signal, results []s
 func runCSVCommand(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("signals csv", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	setUsage(fs, "signals csv <input.csv|-> (-s <file.json>... | --prompt <text> | --type <type>) [-o out.csv] [--dry-run] [flags]", stderr)
 	sf := bindSignalFlags(fs)
 
 	inputPath := fs.String("i", "", "Input CSV file path (or '-' for stdin; also accepts first positional arg)")
@@ -438,6 +481,9 @@ func runCSVCommand(ctx context.Context, args []string, stdin io.Reader, stdout, 
 			parts := make([]string, len(results))
 			for i, res := range results {
 				parts[i] = runner.Signals()[i].Key() + "=" + res.Status.String()
+				if res.Cached {
+					parts[i] += "(cached)"
+				}
 			}
 			fmt.Fprintf(stderr, "[%d/%d] row %d: %s\n", completed, total, index+1, strings.Join(parts, " "))
 		}
@@ -540,4 +586,45 @@ func firstNonEmpty(vals ...string) string {
 		}
 	}
 	return ""
+}
+
+// ============================================================================
+// Subcommand: signals cache
+// ============================================================================
+
+func runCacheCommand(args []string, stdout, stderr io.Writer) error {
+	fs := flag.NewFlagSet("signals cache", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	alsoLinkedIn := fs.Bool("linkedin", false, "Also clear cached LinkedIn data (the next run pays linkdapi again)")
+	fs.Usage = func() {
+		fmt.Fprintln(stderr, `Usage:
+  signals cache clear [--linkedin]
+
+Flags:`)
+		fs.PrintDefaults()
+	}
+	posArgs, err := parseFlags(fs, args)
+	if err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return err
+	}
+	if len(posArgs) != 1 || posArgs[0] != "clear" {
+		fs.Usage()
+		return errors.New("usage: signals cache clear [--linkedin]")
+	}
+	n, err := resultcache.Clear()
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(stdout, "Removed %d cached result(s)\n", n)
+	if *alsoLinkedIn {
+		n, err := linkdapi.ClearCache()
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(stdout, "Removed %d cached LinkedIn response(s)\n", n)
+	}
+	return nil
 }

@@ -52,6 +52,7 @@ type Config struct {
 	WordLimit                  int      `json:"word_limit"`
 	FewShotExamples            string   `json:"few_shot_examples"`
 	ShouldClassifyOutputAsBool bool     `json:"should_classify_output_as_bool"`
+	ExactMatchSearch           bool     `json:"exact_match_search"` // hiring_for_role: job title must contain the term
 	AdvancedModelVerify        bool     `json:"advanced_model_verify"`
 	IsAccountInsight           bool     `json:"is_account_insight"`
 	RequiredDependencies       []string `json:"required_dependencies"`
@@ -160,6 +161,11 @@ func (s Signal) Validate() error {
 		}
 		if len(c.HiringForRole.JobTitles) > maxJobTitles {
 			return fmt.Errorf("hiring_for_role accepts at most %d job_titles (got %d)", maxJobTitles, len(c.HiringForRole.JobTitles))
+		}
+		if loc := strings.TrimSpace(c.HiringForRole.Location); loc != "" {
+			if _, ok := usStates[strings.ToUpper(loc)]; !ok {
+				return fmt.Errorf("invalid hiring_for_role.location %q (expected a US state code such as WA)", c.HiringForRole.Location)
+			}
 		}
 	}
 

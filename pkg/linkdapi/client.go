@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -19,14 +20,20 @@ import (
 // BaseURL is the linkdapi API root (a var so tests can point elsewhere).
 var BaseURL = "https://linkdapi.com/api/v1"
 
-// Cache lifetimes: a role change must show within a TWO_WEEKS window, and posts change daily.
+// Cache lifetimes: a role change must show within a TWO_WEEKS window, posts and job listings
+// change daily, and company ids never change.
 var (
-	ProfileTTL = 7 * 24 * time.Hour
-	PostsTTL   = 24 * time.Hour
+	ProfileTTL   = 7 * 24 * time.Hour
+	PostsTTL     = 24 * time.Hour
+	JobsTTL      = 24 * time.Hour
+	CompanyIDTTL = 90 * 24 * time.Hour
 )
 
 // ErrNotFound is returned (wrapped) when linkdapi has no such profile.
 var ErrNotFound = errors.New("linkdapi: profile not found")
+
+// ErrCompanyNotFound is returned when linkdapi has no company for a LinkedIn slug.
+var ErrCompanyNotFound = errors.New("linkdapi: company not found")
 
 // Cache kinds, for Cached.
 const (
@@ -57,42 +64,59 @@ func New(apiKey string, refresh bool) *Client {
 	return &Client{apiKey: apiKey, refresh: refresh, calls: map[string]*call{}}
 }
 
-type endpoint struct {
-	path  string
-	param string
-	ttl   time.Duration
+// request is one linkdapi GET: its path, query, and cache lifetime.
+type request struct {
+	path   string
+	params map[string]string
+	ttl    time.Duration
 }
 
-func endpointFor(kind string) endpoint {
+// key hashes the request so neither the API key nor the identifiers are on disk in the clear.
+func (r request) key() string {
+	q := url.Values{}
+	for k, v := range r.params {
+		q.Set(k, v)
+	}
+	return cacheKey(r.path + "?" + q.Encode())
+}
+
+func profileRequest(username string) request {
+	return request{"/profile/full", map[string]string{"username": strings.ToLower(strings.TrimSpace(username))}, ProfileTTL}
+}
+
+func postsRequest(urn string) request {
+	return request{"/posts/all", map[string]string{"urn": strings.TrimSpace(urn)}, PostsTTL}
+}
+
+func requestFor(kind, id string) request {
 	if kind == KindPosts {
-		return endpoint{path: "/posts/all", param: "urn", ttl: PostsTTL}
+		return postsRequest(id)
 	}
-	return endpoint{path: "/profile/full", param: "username", ttl: ProfileTTL}
+	return profileRequest(id)
 }
 
-// normalizeID lowercases profile usernames (LinkedIn treats them case-insensitively).
-func normalizeID(kind, id string) string {
-	id = strings.TrimSpace(id)
-	if kind == KindProfile {
-		id = strings.ToLower(id)
-	}
-	return id
-}
-
-// Cached reports whether a fresh response for kind/id is on disk, without any HTTP call.
+// Cached reports whether a fresh response for kind/id is on disk, without any HTTP call. A
+// refreshing Client never reads the cache, so it reports false.
 func (c *Client) Cached(kind, id string) bool {
-	ep := endpointFor(kind)
-	_, ok := readCache(cacheKey(ep.path, ep.param, normalizeID(kind, id)), ep.ttl)
+	return c.cached(requestFor(kind, id))
+}
+
+func (c *Client) cached(req request) bool {
+	_, ok := c.cachedBody(req)
 	return ok
 }
 
-// fetch returns the response body for kind/id: from this Client's earlier call, the disk
-// cache, or linkdapi.
-func (c *Client) fetch(ctx context.Context, kind, id string) ([]byte, error) {
-	ep := endpointFor(kind)
-	id = normalizeID(kind, id)
-	key := cacheKey(ep.path, ep.param, id)
+func (c *Client) cachedBody(req request) ([]byte, bool) {
+	if c.refresh {
+		return nil, false
+	}
+	return readCache(req.key(), req.ttl)
+}
 
+// fetch returns the response body for req: from this Client's earlier call, the disk cache,
+// or linkdapi.
+func (c *Client) fetch(ctx context.Context, req request) ([]byte, error) {
+	key := req.key()
 	c.mu.Lock()
 	cl, ok := c.calls[key]
 	if !ok {
@@ -102,13 +126,11 @@ func (c *Client) fetch(ctx context.Context, kind, id string) ([]byte, error) {
 	c.mu.Unlock()
 
 	cl.once.Do(func() {
-		if !c.refresh {
-			if body, ok := readCache(key, ep.ttl); ok {
-				cl.body = body
-				return
-			}
+		if body, ok := c.cachedBody(req); ok {
+			cl.body = body
+			return
 		}
-		cl.body, cl.err = c.get(ctx, ep, id)
+		cl.body, cl.err = c.get(ctx, req)
 		if cl.err == nil {
 			writeCache(key, cl.body) // a cache write failure only costs a refetch later
 		}
@@ -123,12 +145,12 @@ type envelope struct {
 	Data       json.RawMessage `json:"data"`
 }
 
-func (c *Client) get(ctx context.Context, ep endpoint, id string) ([]byte, error) {
+func (c *Client) get(ctx context.Context, req request) ([]byte, error) {
 	resp, err := httpx.Client().R().
 		SetContext(ctx).
 		SetHeader("X-linkdapi-apikey", c.apiKey).
-		SetQueryParams(map[string]string{ep.param: id}).
-		Get(BaseURL + ep.path)
+		SetQueryParams(req.params).
+		Get(BaseURL + req.path)
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return nil, ctxErr
@@ -178,6 +200,15 @@ func decodeData(body []byte, v any) error {
 
 // UsernameFromURL returns the lowercased <username> of a linkedin.com/in/<username> URL.
 func UsernameFromURL(u string) (string, bool) {
+	return linkedInSlug(u, "in")
+}
+
+// CompanySlugFromURL returns the lowercased slug of a linkedin.com/company|showcase|school/<slug> URL.
+func CompanySlugFromURL(u string) (string, bool) {
+	return linkedInSlug(u, "company", "showcase", "school")
+}
+
+func linkedInSlug(u string, sections ...string) (string, bool) {
 	u = strings.TrimSpace(u)
 	if u == "" {
 		return "", false
@@ -190,7 +221,7 @@ func UsernameFromURL(u string) (string, bool) {
 		return "", false
 	}
 	parts := strings.Split(strings.Trim(parsed.Path, "/"), "/")
-	if len(parts) < 2 || parts[0] != "in" || parts[1] == "" {
+	if len(parts) < 2 || parts[1] == "" || !slices.Contains(sections, strings.ToLower(parts[0])) {
 		return "", false
 	}
 	return strings.ToLower(parts[1]), true

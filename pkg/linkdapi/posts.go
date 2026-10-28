@@ -33,13 +33,17 @@ type rawPost struct {
 // now is the clock for relative post ages (a var so tests can pin it).
 var now = time.Now
 
-// Posts returns the first page (up to 100) of a person's posts by profile URN. Reshares with
-// no commentary and posts with no parseable date are dropped.
+// Posts returns the first page (up to 100) of a person's posts by profile URN. Posts with no
+// text (bare reposts) and posts with no parseable date are dropped.
 func (c *Client) Posts(ctx context.Context, urn string) ([]Post, error) {
-	body, err := c.fetch(ctx, KindPosts, urn)
+	body, err := c.fetch(ctx, postsRequest(urn))
 	if err != nil {
 		return nil, err
 	}
+	return decodePosts(body)
+}
+
+func decodePosts(body []byte) ([]Post, error) {
 	var data struct {
 		Posts []rawPost `json:"posts"`
 	}
@@ -49,9 +53,10 @@ func (c *Client) Posts(ctx context.Context, urn string) ([]Post, error) {
 	ref := now()
 	posts := []Post{}
 	for _, rp := range data.Posts {
+		// A repost with no commentary has empty text: either resharedPostContent is set, or
+		// (company pages) only a "<Company> reposted this" header is.
 		text := strings.TrimSpace(rp.Text)
-		repost := len(rp.Reshared) > 0 && string(rp.Reshared) != "null"
-		if repost && text == "" {
+		if text == "" {
 			continue
 		}
 		date, ok := parsePostedAt(rp.PostedAt, ref)
@@ -60,7 +65,7 @@ func (c *Client) Posts(ctx context.Context, urn string) ([]Post, error) {
 		}
 		posts = append(posts, Post{
 			URN: rp.URN, URL: rp.URL, Text: text, Author: strings.TrimSpace(rp.Author.Name),
-			Date: date, Repost: repost,
+			Date: date, Repost: len(rp.Reshared) > 0 && string(rp.Reshared) != "null",
 		})
 	}
 	return posts, nil

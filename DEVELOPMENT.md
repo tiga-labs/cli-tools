@@ -61,6 +61,21 @@ To test one vendor:
 ENRICH_E2E=1 go test -tags e2e -run 'E2EWaterfallVendor/hunter' -count=1 -v ./pkg/enrich/
 ```
 
+### signals
+
+The signals e2e tests live in `cmd/signals/e2e_test.go`. They need the `e2e` build tag and `SIGNALS_E2E=1`, so they never run with `make test`.
+
+1. Give the tests your keys: `signals keys set openai -` (and `signals keys set linkdapi -`), or `OPENAI_API_KEY` / `LINKDAPI_API_KEY` lines in `.env.e2e`. Without a linkdapi key, the LinkedIn tests are skipped.
+2. Run `make test-e2e-signals`.
+
+Each test uses a fresh cache folder, so it always calls the vendors. One run costs about 6 OpenAI requests, plus up to 25 classifier and 25 research-model calls for the company-posts test, and about 7 linkdapi credits.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `SIGNALS_E2E_CONFIG` | `~/.config/tiga/config.json` | Config file to read keys from |
+
+The Stripe test expects a "no recent funding" answer, as checked on 2026-10-28. If Stripe announces a raise, update `TestE2EStripeFundingDefaultClassifiesNo`.
+
 ## Releasing
 
 Releases are published to [GitHub Releases](https://github.com/tiga-labs/cli-tools/releases) by GoReleaser. To cut a release, tag `master` and push the tag:
@@ -73,9 +88,9 @@ git push origin v0.2.0
 The [`release`](.github/workflows/release.yml) workflow then:
 - runs the tests;
 - builds `darwin`/`linux` × `amd64`/`arm64` binaries;
-- uploads them as `enrich-<os>-<arch>`, together with `checksums.txt` and `install.sh`.
+- uploads them as `enrich-<os>-<arch>` and `signals-<os>-<arch>`, together with `checksums.txt` and `install.sh`.
 
-The version printed by `enrich --version` comes from the tag. Asset names have no version in them, so `.../releases/latest/download/<asset>` always points at the newest release, and that is the URL the installer uses.
+The version printed by `enrich --version` and `signals --version` comes from the tag. Asset names have no version in them, so `.../releases/latest/download/<asset>` always points at the newest release, and that is the URL the installer uses.
 
 To try the release build locally without publishing anything:
 
@@ -87,4 +102,5 @@ make release-snapshot       # builds into dist/
 
 1. Create `cmd/<tool-name>/main.go` (and optional library code under `pkg/<tool-name>/`).
 2. `make build` will automatically discover `cmd/<tool-name>` and build it for your machine.
-3. Add a matching `builds` entry in `.goreleaser.yaml` so the tool is included in releases. `install.sh` can install it with `TOOL=<tool-name>`.
+3. Add a matching `builds` entry in `.goreleaser.yaml` so the tool is included in releases.
+4. Add the tool name to the `case "$TOOL"` check in `install.sh`, so `TOOL=<tool-name>` installs it.

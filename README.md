@@ -1,19 +1,24 @@
-# enrich
+# Tiga CLI tools
 
-**Find work emails, LinkedIn profiles, and phone numbers for your contacts, from the command line.**
+Command-line tools for go-to-market work. They run on your own vendor API keys and need no Tiga account.
 
-You give `enrich` a person or a CSV of contacts. It asks your data vendors, such as Findymail, Prospeo and Apollo, one at a time. It stops as soon as it has what you asked for, so later vendors are not called and you spend credits only on what you need. Each found value records which vendor supplied it.
+| Tool | What it does |
+|---|---|
+| [`enrich`](#enrich) | Finds work emails, LinkedIn profiles and phone numbers for contacts, across 9 data vendors |
+| [`signals`](#signals) | Runs AI research signals on contacts and accounts: funding, hiring, new roles, executive hires, LinkedIn posts |
 
-- Works on one contact (`enrich person`) or a whole CSV (`enrich csv`). The CSV keeps all your original columns and row order.
-- Supports 9 contact-data vendors, plus email verification (ZeroBounce), LinkedIn URN resolution (Renidly) and AI name cleanup (OpenAI).
-- A single binary for macOS and Linux, with nothing else to install.
+Both are single binaries for macOS and Linux, and share one key file (`~/.config/tiga/config.json`).
 
 ---
 
 ## Install
 
 ```bash
+# enrich (the default)
 curl -fsSL https://github.com/tiga-labs/cli-tools/releases/latest/download/install.sh | sh
+
+# signals
+curl -fsSL https://github.com/tiga-labs/cli-tools/releases/latest/download/install.sh | TOOL=signals sh
 ```
 
 The installer downloads the right binary for your machine and checks its SHA-256 checksum before installing it to `/usr/local/bin`. If it can't write to that directory, it asks for `sudo`.
@@ -27,20 +32,31 @@ curl -fsSL https://github.com/tiga-labs/cli-tools/releases/latest/download/insta
 ```
 
 You can also install it these ways:
-- **Manual download:** get `enrich-<os>-<arch>` from the [Releases page](https://github.com/tiga-labs/cli-tools/releases), `chmod +x` it, and put it on your `PATH`. Check it against `checksums.txt` on the same page.
-- **With Go:** `go install github.com/tiga-labs/cli-tools/cmd/enrich@latest`
+- **Manual download:** get `enrich-<os>-<arch>` or `signals-<os>-<arch>` from the [Releases page](https://github.com/tiga-labs/cli-tools/releases), `chmod +x` it, and put it on your `PATH`. Check it against `checksums.txt` on the same page.
+- **With Go:** `go install github.com/tiga-labs/cli-tools/cmd/enrich@latest` (or `.../cmd/signals@latest`)
 
 Supported platforms are macOS and Linux, on Intel/AMD (`amd64`) and ARM (`arm64`). To check the install:
 
 ```bash
 enrich --version
+signals --version
 ```
 
 ---
 
-## Quick start
+## enrich
 
-### 1. Add an API key for at least one vendor
+**Find work emails, LinkedIn profiles, and phone numbers for your contacts, from the command line.**
+
+You give `enrich` a person or a CSV of contacts. It asks your data vendors, such as Findymail, Prospeo and Apollo, one at a time. It stops as soon as it has what you asked for, so later vendors are not called and you spend credits only on what you need. Each found value records which vendor supplied it.
+
+- Works on one contact (`enrich person`) or a whole CSV (`enrich csv`). The CSV keeps all your original columns and row order.
+- Supports 9 contact-data vendors, plus email verification (ZeroBounce), LinkedIn URN resolution (Renidly) and AI name cleanup (OpenAI).
+- A single binary for macOS and Linux, with nothing else to install.
+
+### Quick start
+
+#### 1. Add an API key for at least one vendor
 
 ```bash
 enrich keys set hunter -        # paste your key, then press Enter
@@ -49,7 +65,7 @@ enrich keys list                # see which vendors are configured (keys are mas
 
 The `-` makes `enrich` read the key from stdin, which keeps it out of your shell history. You can also run `enrich keys set hunter <key>`, or use environment variables (see [API keys](#api-keys-and-configuration)).
 
-### 2. Enrich one person
+#### 2. Enrich one person
 
 ```bash
 enrich person --name "Jane Doe" --domain acme.com --format table
@@ -71,7 +87,7 @@ Status:             enriched
 
 You can identify a person in several ways: `--name` or `--first-name`/`--last-name`, plus a company (`--domain`, `--company`, `--website`), or just `--linkedin-url`, `--email-address` or `--urn`. Use `--format json` (the default), `table` or `csv`.
 
-### 3. Enrich a CSV
+#### 3. Enrich a CSV
 
 ```csv
 First Name,Last Name,Company,Website
@@ -87,7 +103,7 @@ The output keeps every original column and row, in the same order, and adds enri
 
 ---
 
-## Supported vendors
+### Supported vendors
 
 `enrich` uses only the vendors you've added keys for. By default it tries them in this order:
 
@@ -115,7 +131,7 @@ Feature vendors add extra steps:
 
 ---
 
-## Common options
+### Common options
 
 These work with both `enrich person` and `enrich csv`:
 
@@ -137,7 +153,7 @@ Run `enrich person --help` or `enrich csv --help` for the full list.
 
 ---
 
-## Working with CSVs
+### Working with CSVs
 
 **Column detection.** `enrich` recognizes common header names automatically. Matching ignores case, spaces, hyphens and underscores. For example:
 
@@ -177,7 +193,7 @@ enrich csv -i leads.csv -o out.csv --col-email "Work Mail" --col-company "Employ
 
 ---
 
-## API keys and configuration
+### API keys and configuration
 
 `enrich keys` saves your keys in `~/.config/tiga/config.json` (or `$XDG_CONFIG_HOME/tiga/config.json`). Only your user can read the file.
 
@@ -208,9 +224,124 @@ To use a different config file for a single run, pass `--config <path>`.
 
 ---
 
-## Using with AI agents
+### Using with AI agents
 
 [`skills/enrich-cli/SKILL.md`](skills/enrich-cli/SKILL.md) is a ready-made skill for Claude Code and other AI agents. It teaches the agent to check your keys, inspect a CSV, ask before spending credits, and report results.
+
+---
+
+## signals
+
+**Ask AI research questions about your contacts and accounts, from the command line.**
+
+You give `signals` one record or a CSV, plus one or more signals. A signal is a question such as "Has {{.AccountName}} raised funding in the last 90 days?". For each record, `signals` researches the question with your OpenAI key (and, if you choose, LinkedIn data from linkdapi). It returns a status, an answer and the sources behind it.
+
+- Works on one record (`signals run`) or a whole CSV (`signals csv`). The CSV keeps all your original columns and row order.
+- Five signal types: open AI research (`gpt`), new role, LinkedIn posts, executive hires and job listings.
+- **Only an OpenAI key is needed to start.** LinkedIn signal types need a linkdapi key, and never spend it unless you pass `--buy-linkedin`.
+- Answers are stored on disk, so rerunning a file costs nothing for rows and signals that haven't changed.
+
+### Quick start
+
+```bash
+signals keys set openai -        # paste your key, then press Enter
+
+signals run --account-name Stripe --account-domain stripe.com \
+  --prompt "Has {{.AccountName}} raised funding {{.Last90Days}}?" --format table
+```
+
+```text
+Signal:  gpt (gpt)
+Status:  2 not_found
+Value:   **No—there is no evidence that Stripe raised a funding round after July 30, 2026.** ...
+Source:  https://stripe.com/newsroom/news
+```
+
+*(Example output from 2026-10-28. Results depend on the question and on the web.)*
+
+A CSV of accounts:
+
+```bash
+signals csv accounts.csv --prompt "Is {{.AccountName}} ({{.AccountWebsite}}) hiring salespeople {{.Last30Days}}?" \
+  --label "Hiring sales" --dry-run       # how many rows, and the most calls it can make: no vendor calls
+signals csv accounts.csv --prompt "Is {{.AccountName}} ({{.AccountWebsite}}) hiring salespeople {{.Last30Days}}?" \
+  --label "Hiring sales" -o scored.csv
+```
+
+For each signal, the output adds `<key>_value`, `<key>_status`, `<key>_sources` (space-separated URLs) and `<key>_error`. The key is the label in lowercase with `_` (`hiring_sales`). A row is a hit when `<key>_status` is `1`.
+
+### Signal types
+
+| Type | For | Keys | Answers |
+|---|---|---|---|
+| `gpt` | person or account | OpenAI | Any question, researched on the web, with cited sources |
+| `started_new_role` | person (`LinkedInUrl`) | linkdapi, plus OpenAI with `--exclude-advisor-roles` | Started a current role inside a window, such as `THREE_MONTHS` |
+| `linkedin_posts` | person, or account with `--account` | linkdapi, OpenAI | Is a recent LinkedIn post about your question? Returns a summary and the post |
+| `hired_executive` | account (`AccountLinkedInUrl`) | linkdapi, OpenAI | Did the company announce hiring one of these executive titles? |
+| `hiring_for_role` | account (`AccountLinkedInUrl`) | linkdapi | Does the company list LinkedIn jobs for these titles (US, or one state with `--location`)? |
+
+Signals come from inline flags (`--prompt`, `--type`, `--label`, …) or from JSON definition files (`-s funding.json`, repeatable), which use the same shape as the Tiga API's signal body. [`skills/signals-cli/SKILL.md`](skills/signals-cli/SKILL.md) has an example definition for every type.
+
+**What prompts can use:**
+- Any standard field (`{{.AccountName}}`, `{{.AccountWebsite}}`, `{{.FirstName}}`, …) and any CSV column (`{{.funding_stage}}`).
+- Date fields: `{{.Last30Days}}`, `{{.Last90Days}}` and others.
+- With `--buy-linkedin`, LinkedIn fields: `{{.PersonLi_Headline}}`, `{{.PersonLi_Experience}}`, `{{.CompanyLi_RecentPosts}}`, ….
+
+`signals csv --help` lists them all.
+
+### Options and costs
+
+| Flag | Default | Effect |
+|---|---|---|
+| `--web-search` / `--no-web-search` | on | Research on the web. With it off, answers have no sources. |
+| `--bool` / `--no-bool` | on | One small extra OpenAI call per hit; a "no" answer becomes not found. `--no-bool` does not override a definition that turns classification on. |
+| `--verify` | off | One extra OpenAI call per hit, to check the answer against its sources |
+| `--buy-linkedin` | off | Allows paid linkdapi calls: about 1 credit per profile, post page or company lookup, and 2 per job search |
+| `--refresh-linkedin` | off | Refetch LinkedIn data (paid again), and recompute stored answers for LinkedIn signals |
+| `--no-cache` | off | Recompute stored answers |
+| `--dry-run` | off | CSV only: print rows, cached rows and the most OpenAI requests and linkdapi credits the run can use, with no vendor calls. LinkedIn types also need `--buy-linkedin` here, which is free on a dry-run. |
+| `--concurrency <n>` | 5 | CSV only: rows processed at once |
+
+> **Cost:**
+> - **OpenAI** bills each gpt answer: one research request per signal per row, which can run up to 10 web searches, plus one small classifier call per hit.
+> - **LinkedIn post signals** (`linkedin_posts`, `hired_executive`) use up to 25 small classifier calls and up to 25 research-model calls per row.
+> - **Before a large file,** run `--dry-run` and try a few rows first.
+>
+> Rows with identical inputs share one answer within a run, so 50 contacts at one company pay once for an account signal.
+
+### Statuses
+
+| Status | Meaning |
+|---|---|
+| `1` success | A hit: read the value and sources |
+| `2` not_found | Ran, and the answer was no (or no evidence, or no such LinkedIn profile or company) |
+| `3` missing_dependencies | A field the signal needs was empty; `_error` names it. Nothing was spent. |
+| `4` failed | A vendor error; `_error` has the message (keys are redacted). Failed rows are retried on the next run. |
+| `5` precondition_failed | The signal's precondition skipped the row |
+
+**Results and safety:**
+- Found and not-found answers are stored under `~/.cache/tiga/signals`, and LinkedIn data under `~/.cache/tiga/linkdapi`. `signals cache clear [--linkedin]` empties them.
+- `signals csv` never writes over its input.
+- On Ctrl-C, finished rows are kept.
+
+### Keys
+
+```bash
+signals keys set openai -
+signals keys set linkdapi -      # only for LinkedIn signal types
+signals keys list
+```
+
+Keys live in the same file as `enrich`'s. `OPENAI_API_KEY` and `LINKDAPI_API_KEY` override it.
+
+### Using with AI agents
+
+[`skills/signals-cli/SKILL.md`](skills/signals-cli/SKILL.md) is a ready-made skill for Claude Code and other AI agents. It teaches the agent to:
+- check your keys
+- dry-run before spending, and ask you first
+- keep LinkedIn spend opt-in
+- filter on status
+- report what was found and not found
 
 ---
 
